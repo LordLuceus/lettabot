@@ -405,9 +405,23 @@ async function stepAuth(config: OnboardConfig, env: Record<string, string>): Pro
     env.LETTA_BASE_URL = url;
     process.env.LETTA_BASE_URL = url; // Set immediately so model listing works
     
-    // Clear API key since we're using a Docker/custom server.
-    delete env.LETTA_API_KEY;
-    delete process.env.LETTA_API_KEY;
+    // Ask for optional server password/token, pre-populate from env
+    const existingKey = process.env.LETTA_API_KEY || env.LETTA_API_KEY || '';
+    const serverToken = await p.text({
+      message: 'Server password or API key (optional)',
+      placeholder: 'Leave empty if server has no auth',
+      initialValue: existingKey,
+    });
+    if (p.isCancel(serverToken)) { p.cancel('Setup cancelled'); process.exit(0); }
+    
+    if (serverToken) {
+      config.apiKey = serverToken;
+      env.LETTA_API_KEY = serverToken;
+      process.env.LETTA_API_KEY = serverToken;
+    } else {
+      delete env.LETTA_API_KEY;
+      delete process.env.LETTA_API_KEY;
+    }
   } else if (authMethod === 'keep') {
     // For OAuth tokens, refresh if needed
     if (existingTokens?.refreshToken) {
@@ -468,7 +482,10 @@ async function stepAuth(config: OnboardConfig, env: Record<string, string>): Pro
       spinner.stop(ok ? `Connected to ${serverLabel}` : 'Connection issue');
       
       if (!ok && isDockerAuthMethod(config.authMethod)) {
-        p.log.warn(`Could not connect to ${config.baseUrl}. Make sure the server is running.`);
+        p.log.warn(`Could not connect to ${config.baseUrl}. Check URL and credentials.`);
+        const retry = await p.confirm({ message: 'Retry authentication?', initialValue: true });
+        if (p.isCancel(retry)) { p.cancel('Setup cancelled'); process.exit(0); }
+        if (retry) return stepAuth(config, env);
       }
     } catch {
       spinner.stop('Connection check skipped');
