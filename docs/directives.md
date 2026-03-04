@@ -80,6 +80,27 @@ The text content is sent to the configured TTS provider (see [TTS Configuration]
 - On Telegram, falls back to audio file if voice messages are restricted by Premium privacy settings
 - Can be combined with text: any text after the `</actions>` block is sent as a normal message alongside the voice note
 
+### `<set-status>`
+
+Sets the bot's custom status text (Discord only). Can be content-bearing or self-closing.
+
+```xml
+<set-status>Pondering the meaning of life</set-status>
+<set-status text="Working on something cool" />
+<set-status clear="true" />
+```
+
+**Formats:**
+- Content-bearing: `<set-status>Your status text</set-status>`
+- Self-closing with text: `<set-status text="Your status text" />`
+- Clear status: `<set-status clear="true" />`
+
+**Persistence:** Status is saved to `data/bot-status.json` and automatically restored on bot restart.
+
+**CLI alternative:** In silent mode (heartbeats, cron), use `lettabot-status set "text"` or `lettabot-status clear`.
+
+**Channel support:** Only Discord supports custom status text. Other channels will skip the directive with a warning.
+
 ### `<no-reply/>`
 
 Suppresses response delivery entirely. The agent's text is discarded.
@@ -105,13 +126,13 @@ Backslash-escaped quotes (common when LLMs generate XML inside a JSON context) a
 
 ## Channel Support
 
-| Channel   | `addReaction` | `send-file` | `kind="audio"` | Notes |
-|-----------|:---:|:---:|:---:|-------|
-| Telegram  | Yes | Yes | Voice note (`sendVoice`) | Falls back to `sendAudio` if voice messages are restricted by Telegram Premium privacy settings. |
-| Slack     | Yes | Yes | Audio attachment | Reactions use Slack emoji names (`:thumbsup:` style). |
-| Discord   | Yes | Yes | Audio attachment | Custom server emoji not yet supported. |
-| WhatsApp  | No  | Yes | Voice note (PTT) | Sent with `ptt: true` for native voice bubble. |
-| Signal    | No  | No  | No | Directive skipped with a warning. |
+| Channel   | `addReaction` | `send-file` | `kind="audio"` | `set-status` | Notes |
+|-----------|:---:|:---:|:---:|:---:|-------|
+| Telegram  | Yes | Yes | Voice note (`sendVoice`) | No | Falls back to `sendAudio` if voice messages are restricted by Telegram Premium privacy settings. |
+| Slack     | Yes | Yes | Audio attachment | No | Reactions use Slack emoji names (`:thumbsup:` style). |
+| Discord   | Yes | Yes | Audio attachment | Yes | Supports custom server emoji (`<:name:id>` or by name). |
+| WhatsApp  | No  | Yes | Voice note (PTT) | No | Sent with `ptt: true` for native voice bubble. |
+| Signal    | No  | No  | No | No | Directive skipped with a warning. |
 
 When a channel doesn't implement `addReaction`, the directive is silently skipped and a warning is logged. This never blocks message delivery.
 

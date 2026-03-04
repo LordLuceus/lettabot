@@ -35,6 +35,9 @@ export class SessionManager {
   private sessionCreationLocks: Map<string, { promise: Promise<Session>; generation: number }> = new Map();
   private sessionGenerations: Map<string, number> = new Map();
 
+  // System prompt sync (runs once per bot lifetime)
+  private systemPromptSynced = false;
+
   // Per-message tool callback. Updated before each send() so the Session
   // options (which hold a stable wrapper) route to the current handler.
   private currentCanUseTool: CanUseToolCallback | undefined;
@@ -58,6 +61,37 @@ export class SessionManager {
     this.config = config;
     this.processingKeys = processingKeys;
     this.lastResultRunFingerprints = lastResultRunFingerprints;
+  }
+
+  // =========================================================================
+  // System prompt sync
+  // =========================================================================
+
+  /**
+   * Sync the lettabot system prompt to the agent on the server.
+   * Runs once per bot lifetime (on first session creation) when syncSystemPrompt is enabled.
+   * Controlled by features.syncSystemPrompt in lettabot.yaml (default: true).
+   */
+  private async maybeSyncSystemPrompt(agentId: string): Promise<void> {
+    if (this.systemPromptSynced) return;
+    this.systemPromptSynced = true;
+
+    if (this.config.syncSystemPrompt === false) {
+      log.info('System prompt sync disabled by config');
+      return;
+    }
+
+    try {
+      const { Letta } = await import('@letta-ai/letta-client');
+      const client = new Letta({
+        apiKey: process.env.LETTA_API_KEY || '',
+        baseURL: process.env.LETTA_BASE_URL || 'https://api.letta.com',
+      });
+      await client.agents.update(agentId, { system: SYSTEM_PROMPT });
+      log.info('Synced system prompt to agent');
+    } catch (err) {
+      log.warn('Failed to sync system prompt:', err instanceof Error ? err.message : err);
+    }
   }
 
   // =========================================================================
@@ -283,6 +317,11 @@ export class SessionManager {
       session = key === 'default'
         ? resumeSession('default', opts)
         : createSession(newAgentId, opts);
+    }
+
+    // Sync system prompt to agent on first session (if enabled)
+    if (sessionAgentId) {
+      await this.maybeSyncSystemPrompt(sessionAgentId);
     }
 
     // Initialize eagerly so the subprocess is ready before the first send()

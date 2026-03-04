@@ -35,8 +35,14 @@ export interface VoiceDirective {
   text: string;
 }
 
+export interface SetStatusDirective {
+  type: 'set-status';
+  text?: string;    // The custom status text to display
+  clear?: boolean;  // If true, remove the current status
+}
+
 // Union type — extend with more directive types later
-export type Directive = ReactDirective | SendFileDirective | VoiceDirective;
+export type Directive = ReactDirective | SendFileDirective | VoiceDirective | SetStatusDirective;
 
 export interface ParseResult {
   cleanText: string;
@@ -51,10 +57,10 @@ const ACTIONS_BLOCK_REGEX = /^\s*<actions>([\s\S]*?)<\/actions>/;
 
 /**
  * Match supported directive tags inside the actions block in source order.
- * - Self-closing: <react ... />, <send-file ... />
- * - Content-bearing: <voice>...</voice>
+ * - Self-closing: <react ... />, <send-file ... />, <set-status ... />
+ * - Content-bearing: <voice>...</voice>, <set-status>...</set-status>
  */
-const DIRECTIVE_TOKEN_REGEX = /<(react|send-file)\b([^>]*)\/>|<voice>([\s\S]*?)<\/voice>/g;
+const DIRECTIVE_TOKEN_REGEX = /<(react|send-file|set-status)\b([^>]*)\/>|<voice>([\s\S]*?)<\/voice>|<set-status>([\s\S]*?)<\/set-status>/g;
 
 /**
  * Parse a single attribute string like: emoji="eyes" message="123"
@@ -76,18 +82,27 @@ function parseAttributes(attrString: string): Record<string, string> {
 function parseChildDirectives(block: string): Directive[] {
   const directives: Directive[] = [];
   let match;
-  const normalizedBlock = block.replace(/\\(['"])/g, '$1');
+  const normalizedBlock = block.replace(/\\(['""])/g, '$1');
 
   // Reset regex state (global flag)
   DIRECTIVE_TOKEN_REGEX.lastIndex = 0;
 
   while ((match = DIRECTIVE_TOKEN_REGEX.exec(normalizedBlock)) !== null) {
-    const [, tagName, attrString, voiceText] = match;
+    const [, tagName, attrString, voiceText, setStatusText] = match;
 
     if (voiceText !== undefined) {
       const text = voiceText.trim();
       if (text) {
         directives.push({ type: 'voice', text });
+      }
+      continue;
+    }
+
+    if (setStatusText !== undefined) {
+      // Content-bearing <set-status>text</set-status>
+      const text = setStatusText.trim();
+      if (text) {
+        directives.push({ type: 'set-status', text });
       }
       continue;
     }
@@ -120,6 +135,16 @@ function parseChildDirectives(block: string): Directive[] {
         ...(kind ? { kind } : {}),
         ...(cleanup ? { cleanup } : {}),
       });
+    }
+
+    if (tagName === 'set-status') {
+      // Self-closing <set-status clear="true" /> or <set-status text="..." />
+      const attrs = parseAttributes(attrString || '');
+      if (attrs.clear === 'true') {
+        directives.push({ type: 'set-status', clear: true });
+      } else if (attrs.text) {
+        directives.push({ type: 'set-status', text: attrs.text });
+      }
     }
   }
 

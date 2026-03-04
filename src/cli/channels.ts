@@ -14,7 +14,7 @@ import { loadAppConfigOrExit, applyConfigToEnv } from '../config/index.js';
 const config = loadAppConfigOrExit();
 applyConfigToEnv(config);
 
-import { listGroupsFromArgs } from './group-listing.js';
+import { listGroupsFromArgs, listEmojiFromArgs } from './group-listing.js';
 
 function showHelp(): void {
   console.log(`
@@ -22,10 +22,15 @@ lettabot-channels - Discover channels across platforms
 
 Commands:
   list [options]          List channels with their IDs
+  emoji [options]         List custom emoji (Discord only)
 
 List options:
   --channel, -c <name>    Platform to list: discord, slack (default: all configured)
   --agent <name>          Agent name from lettabot.yaml (reads tokens from that agent's config)
+
+Emoji options:
+  --server, --guild <id>  Filter by server ID or name (default: all servers)
+  --agent <name>          Agent name from lettabot.yaml
 
 Examples:
   # List channels for all configured platforms
@@ -37,11 +42,17 @@ Examples:
   # List Slack channels only
   lettabot-channels list --channel slack
 
+  # List custom emoji from all Discord servers
+  lettabot-channels emoji
+
+  # List emoji from a specific server
+  lettabot-channels emoji --server "My Server"
+
   # List channels for a specific agent (multi-agent setup)
   lettabot-channels list --agent MyAgent
 
 Environment variables (used as fallback when --agent is not specified):
-  DISCORD_BOT_TOKEN       Required for Discord channel listing
+  DISCORD_BOT_TOKEN       Required for Discord channel/emoji listing
   SLACK_BOT_TOKEN         Required for Slack channel listing
 
 Note: Telegram, WhatsApp, and Signal do not support channel listing.
@@ -55,6 +66,10 @@ const command = args[0];
 switch (command) {
   case 'list':
     listGroupsFromArgs(args.slice(1));
+    break;
+
+  case 'emoji':
+    listEmojiFromArgs(args.slice(1));
     break;
 
   case 'help':

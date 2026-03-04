@@ -28,6 +28,7 @@ export interface ChannelAdapter {
   supportsEditing?(): boolean;
   sendFile?(file: OutboundFile): Promise<{ messageId: string }>;
   addReaction?(chatId: string, messageId: string, emoji: string): Promise<void>;
+  setStatus?(text: string | null): Promise<void>;  // Set custom status text (null to clear)
   getDmPolicy?(): string;
   getFormatterHints(): FormatterHints;
   

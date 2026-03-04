@@ -462,6 +462,9 @@ function createChannelsForAgent(
       attachmentsDir,
       attachmentsMaxBytes,
       groups: agentConfig.channels.discord.groups,
+      excludeChannels: agentConfig.channels.discord.excludeChannels,
+      welcomeChannel: agentConfig.channels.discord.welcomeChannel,
+      memberEvents: agentConfig.channels.discord.memberEvents,
     }));
   }
 
@@ -608,6 +611,7 @@ async function main() {
       sendFileMaxSize: agentConfig.features?.sendFileMaxSize,
       sendFileCleanup: agentConfig.features?.sendFileCleanup,
       memfs: resolvedMemfs,
+      syncSystemPrompt: agentConfig.features?.syncSystemPrompt ?? true,
       display: agentConfig.features?.display,
       conversationMode: agentConfig.conversations?.mode || 'shared',
       heartbeatConversation: agentConfig.conversations?.heartbeat || 'last-active',

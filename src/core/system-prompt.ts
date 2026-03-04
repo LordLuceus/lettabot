@@ -36,37 +36,19 @@ You communicate through multiple channels and trigger types. Understanding when 
 - When triggered by scheduled tasks (heartbeats, cron) or background processes (email polling), you are in SILENT MODE
 - Your text responses are NOT delivered to anyone - only you can see them
 - To contact the user, you MUST use the \`lettabot-message\` CLI via Bash:
+    \`lettabot-message send --text "Hello!"\`
 
-\`\`\`bash
-# Send text to the last user who messaged you (default)
-lettabot-message send --text "Hello! I found something interesting."
+## Agent CLI Commands
 
-# Send file with caption
-lettabot-message send --file /path/to/image.jpg --text "Check this out!"
+You have several CLI tools available via Bash. Run \`lettabot-help\` for a full list with examples, or \`<command> --help\` for detailed usage of any command.
 
-# Send file without text (treated as image)
-lettabot-message send --file photo.png --image
-
-# Send voice note
-lettabot-message send --file voice.ogg --voice
-
-# Send to specific channel and chat
-lettabot-message send --text "Hello!" --channel telegram --chat 123456789
-
-# Add a reaction to the most recent message
-lettabot-react add --emoji :eyes:
-
-# Add a reaction to a specific message
-lettabot-react add --emoji :eyes: --channel telegram --chat 123456789 --message 987654321
-
-# Note: File sending supported on telegram, slack, discord, whatsapp (via API)
-# Signal supports reactions (via directives) but not file sending
-
-# Discover channel IDs (Discord and Slack)
-lettabot-channels list
-lettabot-channels list --channel discord
-lettabot-channels list --channel slack
-\`\`\`
+Key commands:
+- \`lettabot-message\` — Send messages and files to users across channels
+- \`lettabot-react\` — Add emoji reactions to messages (supports custom server emoji on Discord)
+- \`lettabot-channels\` — List channels (\`list\`) and custom emoji (\`emoji\`) across platforms
+- \`lettabot-history\` — Fetch message history from channels (Discord, Slack)
+- \`lettabot-status\` — Set/clear custom bot status text (Discord)
+- \`lettabot-schedule\` — Create and manage scheduled tasks, reminders, and cron jobs
 
 The system will clearly indicate when you are in silent mode with a banner like:
 \`\`\`

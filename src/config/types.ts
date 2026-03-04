@@ -84,6 +84,7 @@ export interface AgentConfig {
       target?: string;       // Delivery target ("telegram:123", "slack:C123", etc.)
     };
     memfs?: boolean;          // Enable memory filesystem (git-backed context repository) for SDK sessions
+    syncSystemPrompt?: boolean; // Sync lettabot system prompt to agent on startup (default: true). Set false to preserve custom prompt edits.
     maxToolCalls?: number;
     sendFileDir?: string;    // Restrict <send-file> directive to this directory (default: data/outbound)
     sendFileMaxSize?: number; // Max file size in bytes for <send-file> (default: 50MB)
@@ -295,6 +296,7 @@ export interface TelegramConfig {
   listeningGroups?: string[];     // @deprecated Use groups.<id>.mode = "listen"
   mentionPatterns?: string[];     // Regex patterns for mention detection (e.g., ["@mybot"])
   groups?: Record<string, GroupConfig>;  // Per-group settings, "*" for defaults
+  excludeChannels?: string[];     // Channel/group IDs to completely exclude (bot ignores all messages)
 }
 
 export interface TelegramMTProtoConfig {
@@ -321,6 +323,7 @@ export interface SlackConfig {
   instantGroups?: string[];       // Channel IDs that bypass batching
   listeningGroups?: string[];     // @deprecated Use groups.<id>.mode = "listen"
   groups?: Record<string, GroupConfig>;  // Per-channel settings, "*" for defaults
+  excludeChannels?: string[];     // Channel IDs to completely exclude (bot ignores all messages)
 }
 
 export interface WhatsAppConfig {
@@ -355,6 +358,7 @@ export interface SignalConfig {
   groupPollIntervalMin?: number;  // @deprecated Use groupDebounceSec instead
   instantGroups?: string[];       // Group IDs that bypass batching
   listeningGroups?: string[];     // @deprecated Use groups.<id>.mode = "listen"
+  excludeChannels?: string[];     // Group IDs to completely exclude (bot ignores all messages)
 }
 
 export interface DiscordConfig {
@@ -368,6 +372,9 @@ export interface DiscordConfig {
   instantGroups?: string[];       // Guild/server IDs or channel IDs that bypass batching
   listeningGroups?: string[];     // @deprecated Use groups.<id>.mode = "listen"
   groups?: Record<string, GroupConfig>;  // Per-guild/channel settings, "*" for defaults
+  excludeChannels?: string[];     // Channel/guild IDs to completely exclude (bot ignores all messages)
+  welcomeChannel?: string;        // Channel ID for member join/leave events (fallback: guild system channel)
+  memberEvents?: boolean;         // Enable member join/leave events (requires GuildMembers privileged intent)
 }
 
 /**

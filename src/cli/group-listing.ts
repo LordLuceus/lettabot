@@ -143,6 +143,72 @@ function printUnsupported(platform: string): void {
   console.log(`${platform}: Channel listing not supported (platform does not expose a bot-visible channel list).`);
 }
 
+// ── Emoji Listing ────────────────────────────────────────────────────────────
+
+interface DiscordEmoji {
+  id: string;
+  name: string | null;
+  animated?: boolean;
+  available?: boolean;
+}
+
+async function listDiscordEmoji(token?: string, guildFilter?: string): Promise<void> {
+  const discordToken = token || process.env.DISCORD_BOT_TOKEN;
+  if (!discordToken) {
+    console.error('Discord: DISCORD_BOT_TOKEN not set.');
+    return;
+  }
+
+  const headers = { Authorization: `Bot ${discordToken}` };
+  const guildsRes = await fetch('https://discord.com/api/v10/users/@me/guilds', { headers });
+  if (!guildsRes.ok) {
+    const error = await guildsRes.text();
+    console.error(`Discord: Failed to fetch guilds: ${error}`);
+    return;
+  }
+
+  const guilds = (await guildsRes.json()) as DiscordGuild[];
+  if (guilds.length === 0) {
+    console.log('Discord:\n  (bot is not in any servers)');
+    return;
+  }
+
+  const targetGuilds = guildFilter
+    ? guilds.filter((g) => g.id === guildFilter || g.name.toLowerCase().includes(guildFilter.toLowerCase()))
+    : guilds;
+
+  if (targetGuilds.length === 0) {
+    console.error(`No server matching "${guildFilter}" found.`);
+    return;
+  }
+
+  console.log('Discord Custom Emoji:');
+  for (const guild of targetGuilds) {
+    const emojiRes = await fetch(`https://discord.com/api/v10/guilds/${guild.id}/emojis`, { headers });
+    if (!emojiRes.ok) {
+      console.log(`  Server: ${guild.name} (id: ${guild.id})`);
+      console.log('    (failed to fetch emoji)');
+      continue;
+    }
+
+    const emojis = (await emojiRes.json()) as DiscordEmoji[];
+    const available = emojis.filter((e) => e.name && e.available !== false);
+
+    console.log(`  Server: ${guild.name} (id: ${guild.id}) — ${available.length} custom emoji`);
+    if (available.length === 0) {
+      console.log('    (no custom emoji)');
+    } else {
+      const maxNameLen = Math.max(...available.map((e) => (e.name || '').length));
+      for (const emoji of available.sort((a, b) => (a.name || '').localeCompare(b.name || ''))) {
+        const padded = (emoji.name || '').padEnd(maxNameLen);
+        const animated = emoji.animated ? ' (animated)' : '';
+        const format = emoji.animated ? `<a:${emoji.name}:${emoji.id}>` : `<:${emoji.name}:${emoji.id}>`;
+        console.log(`    :${padded}:  ${format}${animated}`);
+      }
+    }
+  }
+}
+
 // ── Agent Config Resolution ──────────────────────────────────────────────────
 
 export function resolveAgentConfig(agentName?: string): AgentConfig | undefined {
@@ -275,4 +341,35 @@ export async function listGroupsFromArgs(args: string[]): Promise<void> {
     process.exit(1);
   }
   await listGroups(channel, agent);
+}
+
+export async function listEmoji(agentName?: string, guildFilter?: string): Promise<void> {
+  const agentConfig = resolveAgentConfig(agentName);
+  const { discordToken } = resolveListingTokens(agentConfig, agentName);
+
+  if (!discordToken) {
+    console.error('No Discord token configured. Set DISCORD_BOT_TOKEN or use --agent.');
+    process.exit(1);
+  }
+
+  await listDiscordEmoji(discordToken, guildFilter);
+}
+
+export async function listEmojiFromArgs(args: string[]): Promise<void> {
+  const { agent, error } = parseChannelArgs(args);
+  if (error) {
+    console.error(error);
+    process.exit(1);
+  }
+
+  // Check for --server / --guild filter
+  let guildFilter: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    if ((args[i] === '--server' || args[i] === '--guild') && args[i + 1]) {
+      guildFilter = args[i + 1];
+      i++;
+    }
+  }
+
+  await listEmoji(agent, guildFilter);
 }

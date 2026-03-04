@@ -332,7 +332,7 @@ function buildResponseDirectives(msg: InboundMessage): string[] {
     if (isGroup) {
       lines.push(`- \`<actions><react emoji="fire" message="123" /></actions>\` — react to a specific message`);
     }
-    lines.push(`- Emoji names: eyes, thumbsup, heart, fire, tada, clap — or unicode`);
+    lines.push(`- Emoji names: eyes, thumbsup, heart, fire, tada, clap — or unicode${msg.channel === 'discord' ? ' — or custom server emoji by name or `<:name:id>`' : ''}`);
     lines.push(`- Prefer directives over tool calls for reactions (faster and cheaper)`);
   }
 
@@ -342,6 +342,12 @@ function buildResponseDirectives(msg: InboundMessage): string[] {
   // file sending (only if channel supports it)
   if (supportsFiles) {
     lines.push(`- \`<send-file path="/path/to/file.png" kind="image" />\` — send a file (restricted to configured directory)`);
+  }
+
+  // custom status (Discord only)
+  if (msg.channel === 'discord') {
+    lines.push(`- \`<actions><set-status>Your status text</set-status></actions>\` — set custom status (128 char limit)`);
+    lines.push(`- \`<actions><set-status clear="true" /></actions>\` — clear custom status`);
   }
 
   return lines;

@@ -63,7 +63,15 @@ async function addDiscordReaction(chatId: string, messageId: string, emoji: stri
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) throw new Error('DISCORD_BOT_TOKEN not set');
 
-  const encoded = encodeURIComponent(emoji);
+  // Handle custom emoji format: <:name:id> or <a:name:id> → name:id
+  let resolved = emoji;
+  const customMatch = emoji.match(/^<(a?):([^:]+):(\d+)>$/);
+  if (customMatch) {
+    const [, , name, id] = customMatch;
+    resolved = `${name}:${id}`;
+  }
+
+  const encoded = encodeURIComponent(resolved);
   const response = await fetch(
     `https://discord.com/api/v10/channels/${chatId}/messages/${messageId}/reactions/${encoded}/@me`,
     {

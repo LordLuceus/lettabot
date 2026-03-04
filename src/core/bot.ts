@@ -379,6 +379,26 @@ export class LettaBot implements AgentSession {
         }
       }
 
+      if (directive.type === 'set-status') {
+        if (typeof adapter.setStatus !== 'function') {
+          log.warn(`Directive set-status skipped: ${adapter.name} does not support setStatus`);
+          continue;
+        }
+        try {
+          if (directive.clear) {
+            await adapter.setStatus(null);
+            log.info('Directive: cleared custom status');
+          } else if (directive.text) {
+            await adapter.setStatus(directive.text);
+            log.info(`Directive: set status to "${directive.text}"`);
+          }
+          acted = true;
+        } catch (err) {
+          log.warn('Directive set-status failed:', err instanceof Error ? err.message : err);
+        }
+        continue;
+      }
+
       if (directive.type === 'voice') {
         if (!isVoiceMemoConfigured()) {
           log.warn('Directive voice skipped: no TTS credentials configured');

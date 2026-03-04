@@ -30,6 +30,9 @@ export interface DiscordConfig {
   attachmentsDir?: string;
   attachmentsMaxBytes?: number;
   groups?: Record<string, GroupModeConfig>;  // Per-guild/channel settings
+  excludeChannels?: string[];  // Channel/guild IDs to completely exclude
+  welcomeChannel?: string;     // Channel ID for member join/leave events (fallback: guild system channel)
+  memberEvents?: boolean;      // Enable member join/leave events (default: false, requires GuildMembers intent)
 }
 
 export function shouldProcessDiscordBotMessage(params: {
@@ -55,6 +58,8 @@ export class DiscordAdapter implements ChannelAdapter {
   private running = false;
   private attachmentsDir?: string;
   private attachmentsMaxBytes?: number;
+  private statusWatcher: ReturnType<typeof setInterval> | null = null;
+  private lastStatusText: string | null = null;
 
   onMessage?: (msg: InboundMessage) => Promise<void>;
   onCommand?: (command: string, chatId?: string, args?: string) => Promise<string | null>;
@@ -141,26 +146,78 @@ Ask the bot owner to approve with:
     GatewayIntentBits = discord.GatewayIntentBits;
     Partials = discord.Partials;
 
+    const intents = [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.GuildMessageReactions,
+      GatewayIntentBits.MessageContent,
+      GatewayIntentBits.DirectMessages,
+      GatewayIntentBits.DirectMessageReactions,
+    ];
+    // GuildMembers is a privileged intent — only request it when member events are configured.
+    // The user must also enable "Server Members Intent" in the Discord Developer Portal.
+    if (this.config.memberEvents) {
+      intents.push(GatewayIntentBits.GuildMembers);
+      log.info('Member events enabled — requesting GuildMembers intent');
+    }
+
     this.client = new Client({
-      intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.GuildMessageReactions,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.DirectMessages,
-        GatewayIntentBits.DirectMessageReactions,
-      ],
+      intents,
       partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User],
     });
 
-    this.client.once('clientReady', () => {
+    this.client.once('clientReady', async () => {
       const tag = this.client?.user?.tag || '(unknown)';
       log.info(`Bot logged in as ${tag}`);
       log.info(`DM policy: ${this.config.dmPolicy}`);
       this.running = true;
+
+      // Restore saved custom status from previous session
+      const savedStatus = await loadDiscordStatus();
+      this.lastStatusText = savedStatus;
+      if (savedStatus && this.client?.user) {
+        try {
+          const { ActivityType } = await import('discord.js');
+          this.client.user.setActivity(savedStatus, { type: ActivityType.Custom });
+          log.info(`Restored status: ${savedStatus}`);
+        } catch (err) {
+          log.warn('Failed to restore status:', err);
+        }
+      }
+
+      // Watch status file for changes from lettabot-status CLI
+      this.statusWatcher = setInterval(async () => {
+        try {
+          const current = await loadDiscordStatus();
+          if (current !== this.lastStatusText) {
+            this.lastStatusText = current;
+            if (this.client?.user) {
+              const { ActivityType } = await import('discord.js');
+              if (current) {
+                this.client.user.setActivity(current, { type: ActivityType.Custom });
+                log.info(`Status updated from file: ${current}`);
+              } else {
+                this.client.user.setActivity('');
+                log.info('Status cleared from file');
+              }
+            }
+          }
+        } catch {
+          // Ignore poll errors
+        }
+      }, 5000); // Poll every 5 seconds
     });
 
     this.client.on('messageCreate', async (message) => {
+      // Exclusion list: completely ignore messages from excluded channels/guilds
+      if (this.config.excludeChannels?.length) {
+        const chatId = message.channel.id;
+        const guildId = message.guildId;
+        if (this.config.excludeChannels.includes(chatId) || (guildId && this.config.excludeChannels.includes(guildId))) {
+          return;
+        }
+      }
+
       const isFromBot = !!message.author?.bot;
       const isGroup = !!message.guildId;
       const chatId = message.channel.id;
@@ -329,11 +386,26 @@ Ask the bot owner to approve with:
       await this.handleReactionEvent(reaction, user, 'removed');
     });
 
+    // Member join/leave events (requires GuildMembers intent + Developer Portal toggle)
+    if (this.config.memberEvents) {
+      this.client.on('guildMemberAdd', async (member) => {
+        await this.handleMemberEvent(member, 'member_join');
+      });
+
+      this.client.on('guildMemberRemove', async (member) => {
+        await this.handleMemberEvent(member, 'member_leave');
+      });
+    }
+
     log.info('Connecting...');
     await this.client.login(this.config.token);
   }
 
   async stop(): Promise<void> {
+    if (this.statusWatcher) {
+      clearInterval(this.statusWatcher);
+      this.statusWatcher = null;
+    }
     if (!this.running || !this.client) return;
     this.client.destroy();
     this.running = false;
@@ -405,9 +477,23 @@ Ask the bot owner to approve with:
       throw new Error(`Discord channel not found or not text-based: ${chatId}`);
     }
 
-    const textChannel = channel as { messages: { fetch: (id: string) => Promise<{ react: (input: string) => Promise<unknown> }> } };
+    const textChannel = channel as { messages: { fetch: (id: string) => Promise<{ react: (input: string) => Promise<unknown>; guild?: { emojis: { cache: Map<string, { name: string | null; id: string; animated: boolean }> } } }> } };
     const message = await textChannel.messages.fetch(messageId);
-    const resolved = resolveDiscordEmoji(emoji);
+    let resolved = resolveDiscordEmoji(emoji);
+
+    // If resolved doesn't look like a Unicode emoji or a custom emoji (name:id),
+    // try looking it up in the guild's custom emoji cache by name
+    if (message.guild && !resolved.includes(':') && !/[\u{1F000}-\u{1FFFF}]/u.test(resolved)) {
+      const guild = message.guild as unknown as { emojis: { cache: Map<string, { name: string | null; id: string; animated: boolean }> } };
+      const guildEmoji = Array.from(guild.emojis.cache.values()).find(
+        (e) => e.name?.toLowerCase() === resolved.toLowerCase()
+      );
+      if (guildEmoji) {
+        resolved = guildEmoji.animated ? `a:${guildEmoji.name}:${guildEmoji.id}` : `${guildEmoji.name}:${guildEmoji.id}`;
+        log.info(`Resolved custom emoji "${emoji}" → ${resolved}`);
+      }
+    }
+
     await message.react(resolved);
   }
 
@@ -420,6 +506,26 @@ Ask the bot owner to approve with:
     } catch {
       // Ignore typing indicator failures
     }
+  }
+
+  async setStatus(text: string | null): Promise<void> {
+    if (!this.client?.user) throw new Error('Discord not started');
+    const { ActivityType } = await import('discord.js');
+    if (text) {
+      // Discord custom status has a 128 character limit
+      if (text.length > DISCORD_STATUS_MAX_LENGTH) {
+        const truncated = text.slice(0, DISCORD_STATUS_MAX_LENGTH - 1) + '\u2026';
+        log.warn(`Status text truncated from ${text.length} to ${DISCORD_STATUS_MAX_LENGTH} chars`);
+        text = truncated;
+      }
+      this.client.user.setActivity(text, { type: ActivityType.Custom });
+      log.info(`Status set: ${text}`);
+    } else {
+      this.client.user.setActivity('');
+      log.info('Status cleared');
+    }
+    // Persist for restart recovery
+    await saveDiscordStatus(text);
   }
 
   getDmPolicy(): string {
@@ -459,6 +565,14 @@ Ask the bot owner to approve with:
     const message = reaction.message;
     const channelId = message.channel?.id;
     if (!channelId) return;
+
+    // Exclusion list check for reactions
+    if (this.config.excludeChannels?.length) {
+      const guildId = message.guildId;
+      if (this.config.excludeChannels.includes(channelId) || (guildId && this.config.excludeChannels.includes(guildId))) {
+        return;
+      }
+    }
 
     const access = await this.checkAccess(user.id);
     if (access !== 'allowed') {
@@ -503,6 +617,72 @@ Ask the bot owner to approve with:
     });
   }
 
+  private async handleMemberEvent(
+    member: import('discord.js').GuildMember | import('discord.js').PartialGuildMember,
+    eventType: 'member_join' | 'member_leave'
+  ): Promise<void> {
+    const guild = member.guild;
+    const guildId = guild.id;
+
+    // Check exclusion list
+    if (this.config.excludeChannels?.includes(guildId)) return;
+
+    // Determine the target channel for this event
+    const welcomeChannelId = this.config.welcomeChannel
+      || guild.systemChannelId;
+
+    if (!welcomeChannelId) {
+      log.warn(`Member ${eventType} in ${guild.name} but no welcome channel configured and no system channel available`);
+      return;
+    }
+
+    // Check that the welcome channel passes group-mode gating
+    if (this.config.groups) {
+      const keys = [welcomeChannelId, guildId];
+      if (!isGroupAllowed(this.config.groups, keys)) {
+        log.info(`Member ${eventType} in ${guild.name}: welcome channel ${welcomeChannelId} not in group allowlist, ignoring`);
+        return;
+      }
+    }
+
+    // Check exclusion for the welcome channel too
+    if (this.config.excludeChannels?.includes(welcomeChannelId)) return;
+
+    const userId = member.id;
+    const displayName = ('displayName' in member ? member.displayName : null)
+      || member.user?.globalName
+      || member.user?.username
+      || userId;
+    const username = member.user?.username || userId;
+    const action = eventType === 'member_join' ? 'joined' : 'left';
+
+    const text = `[System: Member ${action}]\nUser: ${username} (${displayName})\nServer: ${guild.name}`;
+
+    log.info(`Member ${eventType}: ${username} (${displayName}) in ${guild.name}`);
+
+    this.onMessage?.({
+      channel: 'discord',
+      chatId: welcomeChannelId,
+      userId,
+      userName: displayName,
+      userHandle: username,
+      text,
+      timestamp: new Date(),
+      isGroup: true,
+      groupName: guild.name,
+      serverId: guildId,
+      event: {
+        type: eventType,
+        userId,
+        userName: displayName,
+        serverName: guild.name,
+      },
+      formatterHints: this.getFormatterHints(),
+    }).catch((err) => {
+      log.error(`Error handling member ${eventType}:`, err);
+    });
+  }
+
   private async collectAttachments(attachments: unknown, channelId: string): Promise<InboundAttachment[]> {
     if (!attachments || typeof attachments !== 'object') return [];
     const list = Array.from((attachments as { values: () => Iterable<DiscordAttachment> }).values?.() || []);
@@ -543,6 +723,38 @@ Ask the bot owner to approve with:
   }
 }
 
+// ── Status Persistence ───────────────────────────────────────────────────────
+
+import { promises as fs } from 'node:fs';
+import { join as pathJoin, dirname } from 'node:path';
+
+const STATUS_FILE = pathJoin(process.cwd(), 'data', 'bot-status.json');
+
+async function saveDiscordStatus(text: string | null): Promise<void> {
+  try {
+    await fs.mkdir(dirname(STATUS_FILE), { recursive: true });
+    if (text) {
+      await fs.writeFile(STATUS_FILE, JSON.stringify({ message: text, timestamp: Date.now() }, null, 2));
+    } else {
+      await fs.unlink(STATUS_FILE).catch(() => {});
+    }
+  } catch (err) {
+    log.warn('Failed to save status:', err);
+  }
+}
+
+async function loadDiscordStatus(): Promise<string | null> {
+  try {
+    const data = await fs.readFile(STATUS_FILE, 'utf-8');
+    const parsed = JSON.parse(data) as { message?: string };
+    return parsed.message || null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Emoji Helpers ────────────────────────────────────────────────────────────
+
 const DISCORD_EMOJI_ALIAS_TO_UNICODE: Record<string, string> = {
   eyes: '\u{1F440}',
   thumbsup: '\u{1F44D}',
@@ -558,20 +770,43 @@ const DISCORD_EMOJI_ALIAS_TO_UNICODE: Record<string, string> = {
   white_check_mark: '\u2705',
 };
 
+/**
+ * Resolve a Discord emoji string for use with message.react().
+ * 
+ * Handles:
+ * - Text aliases: "thumbsup", ":eyes:" → Unicode
+ * - Custom emoji: "<:name:id>" or "<a:name:id>" → "name:id" (for discord.js react)
+ * - Unicode emoji: passed through as-is
+ * - Plain name: if no match, passed through (guild lookup happens in addReaction)
+ */
 function resolveDiscordEmoji(input: string): string {
+  // Custom emoji format: <:name:id> or <a:name:id> (animated)
+  const customMatch = input.match(/^<(a?):([^:]+):(\d+)>$/);
+  if (customMatch) {
+    const [, animated, name, id] = customMatch;
+    // discord.js react() wants "name:id" or "a:name:id" for animated
+    return animated ? `a:${name}:${id}` : `${name}:${id}`;
+  }
+
+  // Colon-wrapped alias: ":eyes:" → look up
   const aliasMatch = input.match(/^:([^:]+):$/);
   const alias = aliasMatch ? aliasMatch[1] : null;
   if (alias && DISCORD_EMOJI_ALIAS_TO_UNICODE[alias]) {
     return DISCORD_EMOJI_ALIAS_TO_UNICODE[alias];
   }
+
+  // Bare alias: "thumbsup" → look up
   if (DISCORD_EMOJI_ALIAS_TO_UNICODE[input]) {
     return DISCORD_EMOJI_ALIAS_TO_UNICODE[input];
   }
+
+  // Otherwise pass through (could be a Unicode emoji or a custom emoji name for guild lookup)
   return input;
 }
 
-// Discord message length limit
+// Discord limits
 const DISCORD_MAX_LENGTH = 2000;
+const DISCORD_STATUS_MAX_LENGTH = 128;
 // Leave some headroom when choosing split points
 const DISCORD_SPLIT_THRESHOLD = 1900;
 

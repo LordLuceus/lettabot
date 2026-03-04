@@ -62,6 +62,17 @@ export interface InboundReaction {
 }
 
 /**
+ * Server/guild event (member join/leave, etc.)
+ * Platform-agnostic — any channel can emit these.
+ */
+export interface InboundEvent {
+  type: 'member_join' | 'member_leave';
+  userId: string;
+  userName?: string;
+  serverName?: string;
+}
+
+/**
  * Inbound message from any channel
  */
 export interface InboundMessage {
@@ -81,6 +92,7 @@ export interface InboundMessage {
   replyToUser?: string;   // Phone number of who they're replying to (if reply)
   attachments?: InboundAttachment[];
   reaction?: InboundReaction;
+  event?: InboundEvent;               // Server/guild event (member join/leave, etc.)
   isBatch?: boolean;                  // Is this a batched group message?
   batchedMessages?: InboundMessage[]; // Original individual messages (for batch formatting)
   isListeningMode?: boolean;          // Listening mode: agent processes for memory but response is suppressed
@@ -157,6 +169,9 @@ export interface BotConfig {
 
   // Memory filesystem (context repository)
   memfs?: boolean; // true -> --memfs, false -> --no-memfs, undefined -> leave unchanged
+
+  // System prompt sync
+  syncSystemPrompt?: boolean; // Sync lettabot system prompt to agent on startup (default: true)
 
   // Security
   redaction?: import('./redact.js').RedactionConfig;
