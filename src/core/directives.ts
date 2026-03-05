@@ -59,8 +59,11 @@ const ACTIONS_BLOCK_REGEX = /^\s*<actions>([\s\S]*?)<\/actions>/;
  * Match supported directive tags inside the actions block in source order.
  * - Self-closing: <react ... />, <send-file ... />, <set-status ... />
  * - Content-bearing: <voice>...</voice>, <set-status>...</set-status>
+ *
+ * The attribute capture uses (?:[^>"']|"[^"]*"|'[^']*')* instead of [^>]*
+ * to allow `>` inside quoted attribute values (e.g. emoji="<:name:id>").
  */
-const DIRECTIVE_TOKEN_REGEX = /<(react|send-file|set-status)\b([^>]*)\/>|<voice>([\s\S]*?)<\/voice>|<set-status>([\s\S]*?)<\/set-status>/g;
+const DIRECTIVE_TOKEN_REGEX = /<(react|send-file|set-status)\b((?:[^>"']|"[^"]*"|'[^']*')*)\/>|<voice>([\s\S]*?)<\/voice>|<set-status>([\s\S]*?)<\/set-status>/g;
 
 /**
  * Parse a single attribute string like: emoji="eyes" message="123"
