@@ -149,6 +149,7 @@ Ask the bot owner to approve with:
 
     const intents = [
       GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildEmojisAndStickers,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.GuildMessageReactions,
       GatewayIntentBits.MessageContent,
@@ -488,20 +489,32 @@ Ask the bot owner to approve with:
       throw new Error(`Discord channel not found or not text-based: ${chatId}`);
     }
 
-    const textChannel = channel as { messages: { fetch: (id: string) => Promise<{ react: (input: string) => Promise<unknown>; guild?: { emojis: { cache: Map<string, { name: string | null; id: string; animated: boolean }> } } }> } };
+    const textChannel = channel as import('discord.js').TextBasedChannel & { messages: import('discord.js').GuildMessageManager };
     const message = await textChannel.messages.fetch(messageId);
     let resolved = resolveDiscordEmoji(emoji);
 
     // If resolved doesn't look like a Unicode emoji or a custom emoji (name:id),
-    // try looking it up in the guild's custom emoji cache by name
-    if (message.guild && !resolved.includes(':') && !/[\u{1F000}-\u{1FFFF}]/u.test(resolved)) {
-      const guild = message.guild as unknown as { emojis: { cache: Map<string, { name: string | null; id: string; animated: boolean }> } };
-      const guildEmoji = Array.from(guild.emojis.cache.values()).find(
-        (e) => e.name?.toLowerCase() === resolved.toLowerCase()
-      );
-      if (guildEmoji) {
-        resolved = guildEmoji.animated ? `a:${guildEmoji.name}:${guildEmoji.id}` : `${guildEmoji.name}:${guildEmoji.id}`;
-        log.info(`Resolved custom emoji "${emoji}" → ${resolved}`);
+    // try looking it up in the guild's custom emoji cache by name.
+    const isUnicode = /\p{Emoji_Presentation}|\p{Extended_Pictographic}/u.test(resolved);
+    const isCustomFormat = resolved.includes(':');
+
+    if (!isUnicode && !isCustomFormat) {
+      // Try guild emoji cache lookup
+      const guild = 'guild' in message && message.guild ? message.guild : null;
+      if (guild) {
+        const cacheSize = guild.emojis.cache.size;
+        log.info(`Guild emoji cache: ${cacheSize} emoji in "${guild.name}"`);
+        const guildEmoji = guild.emojis.cache.find(
+          (e) => e.name?.toLowerCase() === resolved.toLowerCase()
+        );
+        if (guildEmoji) {
+          resolved = guildEmoji.animated ? `a:${guildEmoji.name}:${guildEmoji.id}` : `${guildEmoji.name}:${guildEmoji.id}`;
+          log.info(`Resolved custom emoji "${emoji}" → ${resolved}`);
+        } else {
+          log.warn(`Custom emoji "${resolved}" not found in guild cache (${cacheSize} emoji cached)`);
+        }
+      } else {
+        log.warn(`Cannot resolve custom emoji "${resolved}": no guild context (DM?)`);
       }
     }
 
