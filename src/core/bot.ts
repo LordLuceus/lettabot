@@ -11,7 +11,7 @@ import { execFile } from 'node:child_process';
 import { extname, resolve, join } from 'node:path';
 import type { ChannelAdapter } from '../channels/types.js';
 import type { BotConfig, InboundMessage, TriggerContext, StreamMsg } from './types.js';
-import { formatApiErrorForUser } from './errors.js';
+import { formatApiErrorForUser, formatRawErrorForUser } from './errors.js';
 import { formatToolCallDisplay, formatReasoningDisplay, formatQuestionsForChannel } from './display.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
@@ -202,6 +202,7 @@ export class LettaBot implements AgentSession {
   private processing = false; // Global lock for shared mode
   private processingKeys: Set<string> = new Set(); // Per-key locks for per-channel mode
   private cancelledKeys: Set<string> = new Set(); // Tracks keys where /cancel was issued
+  private lastErrorSent: Map<string, number> = new Map(); // Cooldown: chatId → timestamp of last error message
   private sendSequence = 0; // Monotonic counter for desync diagnostics
   // Forward-looking: stale-result detection via runIds becomes active once the
   // SDK surfaces non-empty result run_ids. Until then, this map mostly stays
@@ -1520,14 +1521,27 @@ export class LettaBot implements AgentSession {
       
     } catch (error) {
       log.error('Error processing message:', error);
-      try {
-        await adapter.sendMessage({
-          chatId: msg.chatId,
-          text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          threadId: msg.threadId,
-        });
-      } catch (sendError) {
-        log.error('Failed to send error message to channel:', sendError);
+
+      // Rate-limit error messages to the channel: at most one per 30 seconds per chat.
+      // This prevents flooding when the session is persistently broken (e.g. server down).
+      const ERROR_COOLDOWN_MS = 30_000;
+      const now = Date.now();
+      const lastSent = this.lastErrorSent.get(msg.chatId) || 0;
+
+      if (now - lastSent >= ERROR_COOLDOWN_MS) {
+        this.lastErrorSent.set(msg.chatId, now);
+        try {
+          const userMessage = formatRawErrorForUser(error);
+          await adapter.sendMessage({
+            chatId: msg.chatId,
+            text: userMessage,
+            threadId: msg.threadId,
+          });
+        } catch (sendError) {
+          log.error('Failed to send error message to channel:', sendError);
+        }
+      } else {
+        log.info(`Suppressed error message to ${msg.chatId} (cooldown: ${Math.round((ERROR_COOLDOWN_MS - (now - lastSent)) / 1000)}s remaining)`);
       }
     } finally {
       const finalConvKey = this.resolveConversationKey(msg.channel, msg.chatId);

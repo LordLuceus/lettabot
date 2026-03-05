@@ -271,6 +271,12 @@ export class SessionManager {
       process.env.CRON_STORE_PATH = this.config.cronStorePath;
     }
 
+    // Sync system prompt to agent before session creation (runs once per bot lifetime).
+    // Must happen before resumeSession/createSession since those spawn subprocesses.
+    if (this.store.agentId) {
+      await this.maybeSyncSystemPrompt(this.store.agentId);
+    }
+
     if (key === 'default' && this.store.agentId) {
       process.env.LETTA_AGENT_ID = this.store.agentId;
       installSkillsToAgent(this.store.agentId, this.config.skills);
@@ -317,11 +323,6 @@ export class SessionManager {
       session = key === 'default'
         ? resumeSession('default', opts)
         : createSession(newAgentId, opts);
-    }
-
-    // Sync system prompt to agent on first session (if enabled)
-    if (sessionAgentId) {
-      await this.maybeSyncSystemPrompt(sessionAgentId);
     }
 
     // Initialize eagerly so the subprocess is ready before the first send()

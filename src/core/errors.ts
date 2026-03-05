@@ -126,3 +126,43 @@ export function formatApiErrorForUser(error: { message: string; stopReason: stri
   const trimmed = detail.replace(/[.\s]+$/, '');
   return `(Agent error: ${trimmed}. Try sending your message again.)`;
 }
+
+/**
+ * Format a raw Error (e.g. from session init failure) into a user-friendly message.
+ * Unlike formatApiErrorForUser, this handles unstructured Error objects from the
+ * session lifecycle rather than SDK stream errors.
+ */
+export function formatRawErrorForUser(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return '(Something went wrong. Try again in a moment.)';
+  }
+  const msg = error.message.toLowerCase();
+
+  // Session init failures (SDK subprocess didn't respond)
+  if (msg.includes('no init message received') || msg.includes('failed to initialize session')) {
+    return '(Failed to connect to the AI backend. The bot may need to be restarted.)';
+  }
+
+  // Subprocess crash / exit
+  if (msg.includes('subprocess') || msg.includes('exited') || msg.includes('killed') || msg.includes('enoent')) {
+    return '(Internal process error. The bot may need to be restarted.)';
+  }
+
+  // Network / connection
+  if (msg.includes('econnrefused') || msg.includes('econnreset') || msg.includes('etimedout') || msg.includes('fetch failed')) {
+    return '(Connection error — the AI server may be temporarily unavailable.)';
+  }
+
+  // Auth
+  if (msg.includes('401') || msg.includes('403') || msg.includes('unauthorized') || msg.includes('forbidden')) {
+    return '(Authentication error. Check the bot configuration.)';
+  }
+
+  // Timeout
+  if (msg.includes('timeout') || msg.includes('timed out')) {
+    return '(Request timed out. Try again in a moment.)';
+  }
+
+  // Fallback — don't expose raw internals
+  return '(Something went wrong processing your message. Try again shortly.)';
+}

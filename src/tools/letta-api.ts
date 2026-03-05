@@ -92,15 +92,30 @@ export async function addToolToAgent(agentId: string, toolId: string): Promise<v
 }
 
 /**
- * Check if an agent exists
+ * Check if an agent exists on the server.
+ * Returns true if reachable, false only on a definitive 404.
+ * Throws on network/auth errors so callers don't accidentally
+ * interpret "server unreachable" as "agent deleted".
  */
 export async function agentExists(agentId: string): Promise<boolean> {
   try {
     const client = getClient();
     await client.agents.retrieve(agentId);
     return true;
-  } catch {
-    return false;
+  } catch (err: unknown) {
+    // Only treat a clear 404 as "agent doesn't exist".
+    // Network errors, auth failures, etc. should propagate so the
+    // caller doesn't nuke persisted state on a transient failure.
+    const status = (err as { status?: number })?.status;
+    if (status === 404) return false;
+
+    const msg = err instanceof Error ? err.message.toLowerCase() : '';
+    if (msg.includes('not found') && !msg.includes('econnrefused') && !msg.includes('fetch failed')) {
+      return false;
+    }
+
+    // Re-throw so callers know the check was inconclusive
+    throw err;
   }
 }
 

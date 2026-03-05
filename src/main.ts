@@ -646,13 +646,19 @@ async function main() {
       initialStatus = bot.getStatus();
     }
     
-    // Verify agent exists (clear stale ID if deleted)
+    // Verify agent exists (clear stale ID only on definitive 404)
     if (initialStatus.agentId) {
-      const exists = await agentExists(initialStatus.agentId);
-      if (!exists) {
-        log.info(`Stored agent ${initialStatus.agentId} not found on server`);
-        bot.reset();
-        initialStatus = bot.getStatus();
+      try {
+        const exists = await agentExists(initialStatus.agentId);
+        if (!exists) {
+          log.info(`Stored agent ${initialStatus.agentId} not found on server (404), clearing`);
+          bot.reset();
+          initialStatus = bot.getStatus();
+        }
+      } catch (err) {
+        // agentExists throws on network/auth errors — keep the agent ID
+        // rather than nuking it on a transient failure.
+        log.warn(`Could not verify agent ${initialStatus.agentId} — keeping stored ID. Error: ${err instanceof Error ? err.message : err}`);
       }
     }
 
