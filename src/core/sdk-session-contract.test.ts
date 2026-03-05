@@ -372,7 +372,9 @@ describe('SDK session contract', () => {
     botInternal.store.conversationId = 'conv-old';
 
     const warmPromise = bot.warmSession();
-    await Promise.resolve();
+    // Yield enough microticks for warmSession to register in the session
+    // creation lock before reset fires (avoids flaky ordering).
+    await new Promise((r) => setTimeout(r, 50));
 
     const resetPromise = botInternal.handleCommand('reset');
 

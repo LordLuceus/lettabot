@@ -1,20 +1,23 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Store } from './store.js';
-import { existsSync, unlinkSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, unlinkSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { AgentStore } from './types.js';
 
 describe('Store', () => {
-  const testDir = join(tmpdir(), 'lettabot-test-' + Date.now() + '-' + Math.random().toString(36).substring(7));
-  const testStorePath = join(testDir, 'test-store.json');
-  const testBackupPath = `${testStorePath}.bak`;
+  let testDir: string;
+  let testStorePath: string;
+  let testBackupPath: string;
   let originalLettaAgentId: string | undefined;
 
   beforeEach(() => {
-    // Create test directory
-    mkdirSync(testDir, { recursive: true });
-    
+    // Use a unique temp directory per test to prevent cross-test contamination
+    // (especially the corruption-recovery test writing truncated JSON).
+    testDir = mkdtempSync(join(tmpdir(), 'lettabot-test-'));
+    testStorePath = join(testDir, 'test-store.json');
+    testBackupPath = `${testStorePath}.bak`;
+
     // Clear LETTA_AGENT_ID env var to avoid interference
     originalLettaAgentId = process.env.LETTA_AGENT_ID;
     delete process.env.LETTA_AGENT_ID;
