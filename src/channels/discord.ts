@@ -11,7 +11,7 @@ import type { DmPolicy } from '../pairing/types.js';
 import { isUserAllowed, upsertPairingRequest } from '../pairing/store.js';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
 import { HELP_TEXT } from '../core/commands.js';
-import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, resolveReceiveBotMessages, type GroupModeConfig } from './group-mode.js';
+import { isGroupAllowed, isGroupUserAllowed, resolveGroupMode, resolveReceiveBotMessages, resolveDailyLimits, checkDailyLimit, type GroupModeConfig } from './group-mode.js';
 import { basename } from 'node:path';
 
 import { createLogger } from '../logger.js';
@@ -33,6 +33,7 @@ export interface DiscordConfig {
   excludeChannels?: string[];  // Channel/guild IDs to completely exclude
   welcomeChannel?: string;     // Channel ID for member join/leave events (fallback: guild system channel)
   memberEvents?: boolean;      // Enable member join/leave events (default: false, requires GuildMembers intent)
+  agentName?: string;       // For scoping daily limit counters in multi-agent mode
 }
 
 export function shouldProcessDiscordBotMessage(params: {
@@ -244,7 +245,7 @@ Ask the bot owner to approve with:
         try {
           const { isTranscriptionConfigured } = await import('../transcription/index.js');
           if (!isTranscriptionConfigured()) {
-            await message.reply('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages');
+            await message.reply('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice');
           } else {
             // Download audio
             const response = await fetch(audioAttachment.url);
@@ -352,6 +353,16 @@ Ask the bot owner to approve with:
             return; // Mention required but not mentioned -- silent drop
           }
           isListeningMode = mode === 'listen' && !wasMentioned;
+
+          // Daily rate limit check (after all other gating so we only count real triggers)
+          const limits = resolveDailyLimits(this.config.groups, keys);
+          const counterScope = limits.matchedKey ?? chatId;
+          const counterKey = `${this.config.agentName ?? ''}:discord:${counterScope}`;
+          const limitResult = checkDailyLimit(counterKey, userId, limits);
+          if (!limitResult.allowed) {
+            log.info(`Daily limit reached for ${counterKey} (${limitResult.reason})`);
+            return;
+          }
         }
 
         await this.onMessage({

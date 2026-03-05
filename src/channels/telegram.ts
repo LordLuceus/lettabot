@@ -18,7 +18,7 @@ import { isGroupApproved, approveGroup } from '../pairing/group-store.js';
 import { basename } from 'node:path';
 import { buildAttachmentPath, downloadToFile } from './attachments.js';
 import { applyTelegramGroupGating } from './telegram-group-gating.js';
-import type { GroupModeConfig } from './group-mode.js';
+import { resolveDailyLimits, checkDailyLimit, type GroupModeConfig } from './group-mode.js';
 
 import { createLogger } from '../logger.js';
 
@@ -32,6 +32,7 @@ export interface TelegramConfig {
   attachmentsMaxBytes?: number;
   mentionPatterns?: string[];    // Regex patterns for mention detection
   groups?: Record<string, GroupModeConfig>;  // Per-group settings
+  agentName?: string;       // For scoping daily limit counters in multi-agent mode
 }
 
 export class TelegramAdapter implements ChannelAdapter {
@@ -92,6 +93,18 @@ export class TelegramAdapter implements ChannelAdapter {
       log.info(`Group message filtered: ${gatingResult.reason}`);
       return null;
     }
+
+    // Daily rate limit check (after all other gating so we only count real triggers)
+    const chatIdStr = String(ctx.chat.id);
+    const senderId = ctx.from?.id ? String(ctx.from.id) : '';
+    const limits = resolveDailyLimits(this.config.groups, [chatIdStr]);
+    const counterKey = `${this.config.agentName ?? ''}:telegram:${limits.matchedKey ?? chatIdStr}`;
+    const limitResult = checkDailyLimit(counterKey, senderId, limits);
+    if (!limitResult.allowed) {
+      log.info(`Daily limit reached for ${counterKey} (${limitResult.reason})`);
+      return null;
+    }
+
     const wasMentioned = gatingResult.wasMentioned ?? false;
     const isListeningMode = gatingResult.mode === 'listen' && !wasMentioned;
     return { isGroup, groupName, wasMentioned, isListeningMode };
@@ -370,7 +383,7 @@ export class TelegramAdapter implements ChannelAdapter {
       // Check if transcription is configured (config or env)
       const { isTranscriptionConfigured } = await import('../transcription/index.js');
       if (!isTranscriptionConfigured()) {
-        await ctx.reply('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice-messages');
+        await ctx.reply('Voice messages require a transcription API key. See: https://github.com/letta-ai/lettabot#voice');
         return;
       }
 

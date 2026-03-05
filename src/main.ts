@@ -374,6 +374,7 @@ function createChannelsForAgent(
       attachmentsMaxBytes,
       groups: agentConfig.channels.telegram!.groups,
       mentionPatterns: agentConfig.channels.telegram!.mentionPatterns,
+      agentName: agentConfig.name,
     }));
   }
 
@@ -405,6 +406,7 @@ function createChannelsForAgent(
       attachmentsDir,
       attachmentsMaxBytes,
       groups: agentConfig.channels.slack.groups,
+      agentName: agentConfig.name,
     }));
   }
 
@@ -425,6 +427,7 @@ function createChannelsForAgent(
       attachmentsMaxBytes,
       groups: agentConfig.channels.whatsapp.groups,
       mentionPatterns: agentConfig.channels.whatsapp.mentionPatterns,
+      agentName: agentConfig.name,
     }));
   }
 
@@ -448,6 +451,7 @@ function createChannelsForAgent(
       attachmentsMaxBytes,
       groups: agentConfig.channels.signal.groups,
       mentionPatterns: agentConfig.channels.signal.mentionPatterns,
+      agentName: agentConfig.name,
     }));
   }
 
@@ -465,6 +469,7 @@ function createChannelsForAgent(
       excludeChannels: agentConfig.channels.discord.excludeChannels,
       welcomeChannel: agentConfig.channels.discord.welcomeChannel,
       memberEvents: agentConfig.channels.discord.memberEvents,
+      agentName: agentConfig.name,
     }));
   }
 
@@ -823,9 +828,10 @@ async function main() {
     services.cronServices.forEach(c => c.stop());
     services.pollingServices.forEach(p => p.stop());
     await gateway.stop();
+    apiServer.close();
     process.exit(0);
   };
-  
+
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 }
