@@ -299,17 +299,23 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
     env.LETTA_API_KEY = config.server.apiKey;
   }
   
-  // Agent
-  if (config.agent.id) {
-    env.LETTA_AGENT_ID = config.agent.id;
+  // Agent — fall back to first entry in agents[] for multi-agent configs
+  const agent = config.agent?.name ? config.agent : config.agents?.[0] ?? config.agent;
+  if (agent.id) {
+    env.LETTA_AGENT_ID = agent.id;
   }
-  if (config.agent.name) {
-    env.AGENT_NAME = config.agent.name;
+  if (agent.name) {
+    env.AGENT_NAME = agent.name;
   }
   // Note: agent.model is intentionally NOT mapped to env.
   // The model is configured on the Letta agent server-side.
   
-  // Channels
+  // Channels — fall back to first agent's channels for multi-agent configs
+  // where channels live under agents[].channels instead of top-level channels.
+  const hasTopLevelChannels = Object.values(config.channels).some(Boolean);
+  if (!hasTopLevelChannels && config.agents?.[0]?.channels) {
+    config = { ...config, channels: config.agents[0].channels };
+  }
   if (config.channels.telegram?.token) {
     env.TELEGRAM_BOT_TOKEN = config.channels.telegram.token;
     if (config.channels.telegram.dmPolicy) {
