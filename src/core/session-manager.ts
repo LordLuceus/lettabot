@@ -38,18 +38,21 @@ export class SessionManager {
   // System prompt sync (runs once per bot lifetime)
   private systemPromptSynced = false;
 
-  // Per-message tool callback. Updated before each send() so the Session
-  // options (which hold a stable wrapper) route to the current handler.
-  private currentCanUseTool: CanUseToolCallback | undefined;
+  // Per-key tool callbacks. Updated before each send() so the Session
+  // options (which hold a stable per-key wrapper) route to the current handler.
+  // Keyed by convKey so concurrent sessions on different keys don't clobber
+  // each other's callback (e.g. 'discord' and 'heartbeat' running in parallel).
+  private currentCanUseToolByKey = new Map<string, CanUseToolCallback | undefined>();
 
-  // Stable callback wrapper so the Session options never change, but we can
-  // swap out the per-message handler before each send().
-  private readonly sessionCanUseTool: CanUseToolCallback = async (toolName, toolInput) => {
-    if (this.currentCanUseTool) {
-      return this.currentCanUseTool(toolName, toolInput);
-    }
-    return { behavior: 'allow' as const };
-  };
+  // Returns a stable per-key wrapper so Session options never change, while
+  // still allowing the per-message handler to be swapped before each send().
+  private createSessionCanUseTool(key: string): CanUseToolCallback {
+    return async (toolName, toolInput) => {
+      const handler = this.currentCanUseToolByKey.get(key);
+      if (handler) return handler(toolName, toolInput);
+      return { behavior: 'allow' as const };
+    };
+  }
 
   constructor(
     store: Store,
@@ -254,7 +257,7 @@ export class SessionManager {
     // changes made by other processes (e.g. after a restart or container deploy).
     this.store.refresh();
 
-    const opts = this.baseSessionOptions(this.sessionCanUseTool);
+    const opts = this.baseSessionOptions(this.createSessionCanUseTool(key));
     let session: Session;
     let sessionAgentId: string | undefined;
 
@@ -269,12 +272,6 @@ export class SessionManager {
     // Propagate per-agent cron store path to CLI subprocesses (lettabot-schedule)
     if (this.config.cronStorePath) {
       process.env.CRON_STORE_PATH = this.config.cronStorePath;
-    }
-
-    // Sync system prompt to agent before session creation (runs once per bot lifetime).
-    // Must happen before resumeSession/createSession since those spawn subprocesses.
-    if (this.store.agentId) {
-      await this.maybeSyncSystemPrompt(this.store.agentId);
     }
 
     if (key === 'default' && this.store.agentId) {
@@ -330,6 +327,12 @@ export class SessionManager {
     try {
       await this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`);
       log.info(`Session subprocess ready (key=${key})`);
+
+      // Sync system prompt on first session init (runs once per bot lifetime).
+      // Fire-and-forget: don't block session readiness on the API call.
+      if (sessionAgentId) {
+        this.maybeSyncSystemPrompt(sessionAgentId);
+      }
     } catch (error) {
       // Close immediately so failed initialization cannot leak a subprocess.
       session.close();
@@ -452,6 +455,7 @@ export class SessionManager {
         this.sessionLastUsed.delete(key);
       }
       this.lastResultRunFingerprints.delete(key);
+      this.currentCanUseToolByKey.delete(key);
     } else {
       const keys = new Set<string>([
         ...this.sessions.keys(),
@@ -470,6 +474,7 @@ export class SessionManager {
       this.sessionCreationLocks.clear();
       this.sessionLastUsed.clear();
       this.lastResultRunFingerprints.clear();
+      this.currentCanUseToolByKey.clear();
     }
   }
 
@@ -537,8 +542,8 @@ export class SessionManager {
   ): Promise<{ session: Session; stream: () => AsyncGenerator<StreamMsg> }> {
     const { retried = false, canUseTool, convKey = 'shared' } = options;
 
-    // Update the per-message callback before sending
-    this.currentCanUseTool = canUseTool;
+    // Update the per-key callback before sending
+    this.currentCanUseToolByKey.set(convKey, canUseTool);
 
     let session = await this.ensureSessionForKey(convKey);
 
