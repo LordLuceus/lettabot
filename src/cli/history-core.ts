@@ -44,11 +44,31 @@ export function parseFetchArgs(args: string[]): {
   };
 }
 
+/**
+ * Validate that a string looks like a Discord snowflake ID (numeric, 17-20 digits).
+ */
+function isSnowflake(id: string): boolean {
+  return /^\d+$/.test(id) && id.length >= 1;
+}
+
 export async function fetchDiscordHistory(chatId: string, limit: number, before?: string): Promise<string> {
   limit = Math.min(limit, 100);
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) {
-    throw new Error('DISCORD_BOT_TOKEN not set');
+    throw new Error('DISCORD_BOT_TOKEN not set. Ensure the token is in your lettabot.yaml or set the environment variable.');
+  }
+
+  if (!isSnowflake(chatId)) {
+    throw new Error(
+      `Invalid channel ID "${chatId}". Expected a numeric snowflake ID (e.g. "1179817278871699486"), not a channel name. ` +
+      'Use "lettabot-channels list" to find channel IDs.'
+    );
+  }
+
+  if (before && !isSnowflake(before)) {
+    throw new Error(
+      `Invalid --before value "${before}". Expected a numeric message snowflake ID.`
+    );
   }
 
   const params = new URLSearchParams({ limit: String(limit) });
@@ -62,8 +82,15 @@ export async function fetchDiscordHistory(chatId: string, limit: number, before?
   });
 
   if (!response.ok) {
+    const status = response.status;
+    if (status === 404) {
+      throw new Error(`Channel ${chatId} not found. The bot may not have access to this channel.`);
+    }
+    if (status === 403) {
+      throw new Error(`Permission denied for channel ${chatId}. The bot needs "Read Message History" permission.`);
+    }
     const error = await response.text();
-    throw new Error(`Discord API error: ${error}`);
+    throw new Error(`Discord API error (${status}): ${error}`);
   }
 
   const messages = await response.json() as Array<{
