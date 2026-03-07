@@ -379,6 +379,7 @@ export interface DiscordConfig {
   excludeChannels?: string[];     // Channel/guild IDs to completely exclude (bot ignores all messages)
   welcomeChannel?: string;        // Channel ID for member join/leave events (fallback: guild system channel)
   memberEvents?: boolean;         // Enable member join/leave events (requires GuildMembers privileged intent)
+  ignoreBotReactions?: boolean;   // Ignore all bot reactions (default: true). Set false for multi-bot setups.
 }
 
 /**

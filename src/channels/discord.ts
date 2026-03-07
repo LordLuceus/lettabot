@@ -37,6 +37,7 @@ export interface DiscordConfig {
   welcomeChannel?: string;     // Channel ID for member join/leave events (fallback: guild system channel)
   memberEvents?: boolean;      // Enable member join/leave events (default: false, requires GuildMembers intent)
   agentName?: string;       // For scoping daily limit counters in multi-agent mode
+  ignoreBotReactions?: boolean;   // Ignore all bot reactions (default: true). Set false for multi-bot setups.
 }
 
 export function shouldProcessDiscordBotMessage(params: {
@@ -294,7 +295,7 @@ Ask the bot owner to approve with:
           return;
         }
         if (this.onCommand) {
-          if (command === 'status' || command === 'reset' || command === 'heartbeat' || command === 'cancel' || command === 'model') {
+          if (command === 'status' || command === 'reset' || command === 'heartbeat' || command === 'cancel' || command === 'model' || command === 'setconv') {
             const result = await this.onCommand(command, message.channel.id, cmdArgs);
             if (result) {
               await message.channel.send(result);
@@ -559,7 +560,11 @@ Ask the bot owner to approve with:
     user: import('discord.js').User | import('discord.js').PartialUser,
     action: InboundReaction['action']
   ): Promise<void> {
-    if ('bot' in user && user.bot) return;
+    // By default ignore all bot reactions; when ignoreBotReactions is false,
+    // only ignore self-reactions (allows multi-bot setups)
+    const ignoreBots = this.config.ignoreBotReactions ?? true;
+    if (ignoreBots && 'bot' in user && user.bot) return;
+    if (!ignoreBots && user.id === this.client?.user?.id) return;
 
     try {
       if (reaction.partial) {

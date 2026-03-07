@@ -267,6 +267,15 @@ export class TelegramAdapter implements ChannelAdapter {
         await ctx.reply(result || 'No model info available');
       }
     });
+
+    // Handle /setconv <id>
+    this.bot.command('setconv', async (ctx) => {
+      if (this.onCommand) {
+        const args = ctx.match?.trim() || undefined;
+        const result = await this.onCommand('setconv', String(ctx.chat.id), args);
+        await ctx.reply(result || 'Failed to set conversation');
+      }
+    });
     
     // Handle text messages
     this.bot.on('message:text', async (ctx) => {
@@ -617,7 +626,7 @@ export class TelegramAdapter implements ChannelAdapter {
   }
 
   async addReaction(chatId: string, messageId: string, emoji: string): Promise<void> {
-    const resolved = resolveEmoji(emoji);
+    const resolved = resolveTelegramEmoji(emoji);
     if (!TELEGRAM_REACTION_SET.has(resolved)) {
       throw new Error(`Unsupported Telegram reaction emoji: ${resolved}`);
     }
@@ -808,6 +817,13 @@ function extractTelegramReaction(reaction?: {
     return `custom:${reaction.custom_emoji_id}`;
   }
   return null;
+}
+
+function resolveTelegramEmoji(input: string): string {
+  const resolved = resolveEmoji(input);
+  // Strip variation selectors (U+FE0E / U+FE0F). Telegram's reaction API
+  // expects bare emoji without them (e.g. ❤ not ❤️).
+  return resolved.replace(/[\uFE0E\uFE0F]/g, '');
 }
 
 const TELEGRAM_REACTION_EMOJIS = [

@@ -211,6 +211,7 @@ export interface StreamMsg {
   toolCallId?: string;
   toolName?: string;
   uuid?: string;
+  runId?: string;
   isError?: boolean;
   result?: string;
   runIds?: string[];

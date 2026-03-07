@@ -40,6 +40,22 @@ const AUDIO_FILE_EXTENSIONS = new Set([
   '.ogg', '.opus', '.mp3', '.m4a', '.wav', '.aac', '.flac',
 ]);
 
+type StreamErrorDetail = {
+  message: string;
+  stopReason: string;
+  apiError?: Record<string, unknown>;
+  isApprovalError?: boolean;
+};
+
+type ResultRetryDecision = {
+  isTerminalError: boolean;
+  isConflictError: boolean;
+  isApprovalConflict: boolean;
+  isNonRetryableError: boolean;
+  shouldRetryForEmptyResult: boolean;
+  shouldRetryForErrorResult: boolean;
+};
+
 /** Infer whether a file is an image, audio, or generic file based on extension. */
 export function inferFileKind(filePath: string): 'image' | 'file' | 'audio' {
   const ext = extname(filePath).toLowerCase();
@@ -187,7 +203,7 @@ export function resolveHeartbeatConversationKey(
 }
 
 export class LettaBot implements AgentSession {
-  private store: Store;
+  readonly store: Store;
   private config: BotConfig;
   private channels: Map<string, ChannelAdapter> = new Map();
   private messageQueue: Array<{ msg: InboundMessage; adapter: ChannelAdapter }> = [];
@@ -244,18 +260,31 @@ export class LettaBot implements AgentSession {
     return `${this.config.displayName}: ${text}`;
   }
 
-  private normalizeResultRunIds(msg: StreamMsg): string[] {
-    // Forward-looking compatibility:
-    // - Current SDK releases often emit result.run_ids as null/undefined.
-    // - When runIds are absent, caller gets [] and falls back to streamed vs
-    //   result text comparison (which works with today's wire payloads).
+  private normalizeStreamRunIds(msg: StreamMsg): string[] {
+    const ids: string[] = [];
+
+    const rawRunId = (msg as StreamMsg & { runId?: unknown; run_id?: unknown }).runId
+      ?? (msg as StreamMsg & { run_id?: unknown }).run_id;
+    if (typeof rawRunId === 'string' && rawRunId.trim().length > 0) {
+      ids.push(rawRunId.trim());
+    }
+
     const rawRunIds = (msg as StreamMsg & { runIds?: unknown; run_ids?: unknown }).runIds
       ?? (msg as StreamMsg & { run_ids?: unknown }).run_ids;
-    if (!Array.isArray(rawRunIds)) return [];
+    if (Array.isArray(rawRunIds)) {
+      for (const id of rawRunIds) {
+        if (typeof id === 'string' && id.trim().length > 0) {
+          ids.push(id.trim());
+        }
+      }
+    }
 
-    const runIds = rawRunIds.filter((id): id is string =>
-      typeof id === 'string' && id.trim().length > 0
-    );
+    if (ids.length === 0) return [];
+    return [...new Set(ids)];
+  }
+
+  private normalizeResultRunIds(msg: StreamMsg): string[] {
+    const runIds = this.normalizeStreamRunIds(msg);
     if (runIds.length === 0) return [];
 
     return [...new Set(runIds)].sort();
@@ -491,6 +520,14 @@ export class LettaBot implements AgentSession {
    */
   async warmSession(): Promise<void> {
     return this.sessionManager.warmSession();
+  }
+
+  /**
+   * Invalidate cached session(s), forcing a fresh session on next message.
+   * The next message will create a fresh session using the current store state.
+   */
+  invalidateSession(key?: string): void {
+    this.sessionManager.invalidateSession(key);
   }
 
   // =========================================================================
@@ -874,18 +911,48 @@ export class LettaBot implements AgentSession {
     this.processing = false;
   }
 
-  // =========================================================================
-  // processMessage - User-facing message handling
-  // =========================================================================
-  
-  private async processMessage(msg: InboundMessage, adapter: ChannelAdapter, retried = false): Promise<void> {
-    // Track timing and last target
-    const debugTiming = !!process.env.LETTABOT_DEBUG_TIMING;
-    const t0 = debugTiming ? performance.now() : 0;
-    const lap = (label: string) => {
-      log.debug(`${label}: ${(performance.now() - t0).toFixed(0)}ms`);
+  private buildCanUseToolCallback(msg: InboundMessage, adapter: ChannelAdapter): CanUseToolCallback {
+    return async (toolName, toolInput) => {
+      if (toolName === 'AskUserQuestion') {
+        const questions = (toolInput.questions || []) as Array<{
+          question: string;
+          header: string;
+          options: Array<{ label: string; description: string }>;
+          multiSelect: boolean;
+        }>;
+        const questionText = formatQuestionsForChannel(questions);
+        log.info(`AskUserQuestion: sending ${questions.length} question(s) to ${msg.channel}:${msg.chatId}`);
+        await adapter.sendMessage({ chatId: msg.chatId, text: questionText, threadId: msg.threadId });
+
+        // Wait for the user's next message (intercepted by handleMessage).
+        // Key by convKey so each chat resolves independently in per-chat mode.
+        const questionConvKey = this.resolveConversationKey(msg.channel, msg.chatId);
+        const answer = await new Promise<string>((resolve) => {
+          this.pendingQuestionResolvers.set(questionConvKey, resolve);
+        });
+        log.info(`AskUserQuestion: received answer (${answer.length} chars)`);
+
+        const answers: Record<string, string> = {};
+        for (const q of questions) {
+          answers[q.question] = answer;
+        }
+        return {
+          behavior: 'allow' as const,
+          updatedInput: { ...toolInput, answers },
+        };
+      }
+
+      // All other interactive tools: allow by default
+      return { behavior: 'allow' as const };
     };
-    const suppressDelivery = isResponseDeliverySuppressed(msg);
+  }
+
+  private async prepareMessageForRun(
+    msg: InboundMessage,
+    adapter: ChannelAdapter,
+    suppressDelivery: boolean,
+    lap: (label: string) => void,
+  ): Promise<{ messageToSend: SendMessage; canUseTool: CanUseToolCallback } | null> {
     this.lastUserMessageTime = new Date();
 
     // Skip heartbeat target update for listening mode (don't redirect heartbeats)
@@ -920,10 +987,9 @@ export class LettaBot implements AgentSession {
           threadId: msg.threadId,
         });
       }
-      return;
+      return null;
     }
 
-    // Format message with metadata envelope
     const prevTarget = this.store.lastMessageTarget;
     const isNewChatSession = !prevTarget || prevTarget.chatId !== msg.chatId || prevTarget.channel !== msg.channel;
     const sessionContext: SessionContextOptions | undefined = isNewChatSession ? {
@@ -937,42 +1003,100 @@ export class LettaBot implements AgentSession {
     const messageToSend = await buildMultimodalMessage(formattedText, msg);
     lap('format message');
 
-    // Build AskUserQuestion-aware canUseTool callback with channel context.
-    // In bypassPermissions mode, this callback is only invoked for interactive
-    // tools (AskUserQuestion, ExitPlanMode) -- normal tools are auto-approved.
-    const canUseTool: CanUseToolCallback = async (toolName, toolInput) => {
-      if (toolName === 'AskUserQuestion') {
-        const questions = (toolInput.questions || []) as Array<{
-          question: string;
-          header: string;
-          options: Array<{ label: string; description: string }>;
-          multiSelect: boolean;
-        }>;
-        const questionText = formatQuestionsForChannel(questions);
-        log.info(`AskUserQuestion: sending ${questions.length} question(s) to ${msg.channel}:${msg.chatId}`);
-        await adapter.sendMessage({ chatId: msg.chatId, text: questionText, threadId: msg.threadId });
+    const canUseTool = this.buildCanUseToolCallback(msg, adapter);
+    return { messageToSend, canUseTool };
+  }
 
-        // Wait for the user's next message (intercepted by handleMessage).
-        // Key by convKey so each chat resolves independently in per-chat mode.
-        const questionConvKey = this.resolveConversationKey(msg.channel, msg.chatId);
-        const answer = await new Promise<string>((resolve) => {
-          this.pendingQuestionResolvers.set(questionConvKey, resolve);
-        });
-        log.info(`AskUserQuestion: received answer (${answer.length} chars)`);
+  private isNonRetryableError(lastErrorDetail: StreamErrorDetail | null, isTerminalError: boolean): boolean {
+    if (!isTerminalError) return false;
+    const errMsg = lastErrorDetail?.message?.toLowerCase() || '';
+    const errApiMsg = (typeof lastErrorDetail?.apiError?.message === 'string'
+      ? lastErrorDetail.apiError.message : '').toLowerCase();
+    const errAny = errMsg + ' ' + errApiMsg;
+    return (
+      errAny.includes('out of credits') || errAny.includes('usage limit') ||
+      errAny.includes('401') || errAny.includes('403') ||
+      errAny.includes('unauthorized') || errAny.includes('forbidden') ||
+      errAny.includes('404') ||
+      ((errAny.includes('agent') || errAny.includes('conversation')) && errAny.includes('not found')) ||
+      errAny.includes('rate limit') || errAny.includes('429')
+    );
+  }
 
-        // Map the user's response to each question
-        const answers: Record<string, string> = {};
-        for (const q of questions) {
-          answers[q.question] = answer;
-        }
-        return {
-          behavior: 'allow' as const,
-          updatedInput: { ...toolInput, answers },
-        };
-      }
-      // All other interactive tools: allow by default
-      return { behavior: 'allow' as const };
+  private buildResultRetryDecision(
+    streamMsg: StreamMsg,
+    resultText: string,
+    hasResponse: boolean,
+    sentAnyMessage: boolean,
+    lastErrorDetail: StreamErrorDetail | null,
+  ): ResultRetryDecision {
+    const isTerminalError = streamMsg.success === false || !!streamMsg.error;
+    const nothingDelivered = !hasResponse && !sentAnyMessage;
+    const isConflictError = lastErrorDetail?.message?.toLowerCase().includes('conflict') || false;
+    const isApprovalConflict = (isConflictError &&
+      lastErrorDetail?.message?.toLowerCase().includes('waiting for approval')) ||
+      lastErrorDetail?.isApprovalError === true;
+    const isNonRetryableError = this.isNonRetryableError(lastErrorDetail, isTerminalError);
+
+    return {
+      isTerminalError,
+      isConflictError,
+      isApprovalConflict,
+      isNonRetryableError,
+      shouldRetryForEmptyResult: streamMsg.success === true && resultText === '' && nothingDelivered,
+      shouldRetryForErrorResult: isTerminalError && nothingDelivered && !isConflictError && !isNonRetryableError,
     };
+  }
+
+  private async deliverNoVisibleResponseIfNeeded(
+    msg: InboundMessage,
+    adapter: ChannelAdapter,
+    sentAnyMessage: boolean,
+    receivedAnyData: boolean,
+    msgTypeCounts: Record<string, number>,
+  ): Promise<void> {
+    if (sentAnyMessage) return;
+
+    if (!receivedAnyData) {
+      log.error('Stream received NO DATA - possible stuck state');
+      await adapter.sendMessage({
+        chatId: msg.chatId,
+        text: '(No response received -- the connection may have dropped or the server may be busy. Please try again. If this persists, /reset will start a fresh conversation.)',
+        threadId: msg.threadId,
+      });
+      return;
+    }
+
+    const hadToolActivity = (msgTypeCounts['tool_call'] || 0) > 0 || (msgTypeCounts['tool_result'] || 0) > 0;
+    if (hadToolActivity) {
+      log.info('Agent had tool activity but no assistant message - likely sent via tool');
+      return;
+    }
+
+    await adapter.sendMessage({
+      chatId: msg.chatId,
+      text: '(The agent processed your message but didn\'t produce a visible response. This can happen with certain prompts. Try rephrasing or sending again.)',
+      threadId: msg.threadId,
+    });
+  }
+
+  // =========================================================================
+  // processMessage - User-facing message handling
+  // =========================================================================
+  
+  private async processMessage(msg: InboundMessage, adapter: ChannelAdapter, retried = false): Promise<void> {
+    // Track timing and last target
+    const debugTiming = !!process.env.LETTABOT_DEBUG_TIMING;
+    const t0 = debugTiming ? performance.now() : 0;
+    const lap = (label: string) => {
+      log.debug(`${label}: ${(performance.now() - t0).toFixed(0)}ms`);
+    };
+    const suppressDelivery = isResponseDeliverySuppressed(msg);
+    const prepared = await this.prepareMessageForRun(msg, adapter, suppressDelivery, lap);
+    if (!prepared) {
+      return;
+    }
+    const { messageToSend, canUseTool } = prepared;
 
     // Run session
     let session: Session | null = null;
@@ -998,9 +1122,22 @@ export class LettaBot implements AgentSession {
       let sentAnyMessage = false;
       let receivedAnyData = false;
       let sawNonAssistantSinceLastUuid = false;
-      let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown>; isApprovalError?: boolean } | null = null;
+      let lastErrorDetail: StreamErrorDetail | null = null;
       let retryInfo: { attempt: number; maxAttempts: number; reason: string } | null = null;
       let reasoningBuffer = '';
+      let expectedForegroundRunId: string | null = null;
+      let expectedForegroundRunSource: 'assistant' | 'result' | null = null;
+      let sawCompetingRunEvent = false;
+      let sawForegroundResult = false;
+      let filteredRunEventCount = 0;
+      let ignoredNonForegroundResultCount = 0;
+      let bufferedDisplayFlushed = false;
+      let bufferedDisplayFlushCount = 0;
+      let bufferedDisplayDropCount = 0;
+      const bufferedDisplayEvents: Array<
+        | { kind: 'reasoning'; runId: string; content: string }
+        | { kind: 'tool_call'; runId: string; msg: StreamMsg }
+      > = [];
       const msgTypeCounts: Record<string, number> = {};
 
       const parseAndHandleDirectives = async () => {
@@ -1017,6 +1154,72 @@ export class LettaBot implements AgentSession {
         if (await this.executeDirectives(directives, adapter, msg.chatId, msg.messageId, msg.threadId)) {
           sentAnyMessage = true;
         }
+      };
+
+      const sendReasoningDisplay = async (content: string) => {
+        if (!this.config.display?.showReasoning || suppressDelivery || !content.trim()) return;
+        try {
+          const reasoning = formatReasoningDisplay(content, adapter.id, this.config.display?.reasoningMaxChars);
+          await adapter.sendMessage({
+            chatId: msg.chatId,
+            text: reasoning.text,
+            threadId: msg.threadId,
+            parseMode: reasoning.parseMode,
+          });
+          // Note: display messages don't set sentAnyMessage -- they're informational,
+          // not a substitute for an assistant response.
+        } catch (err) {
+          log.warn('Failed to send reasoning display:', err instanceof Error ? err.message : err);
+        }
+      };
+
+      const sendToolCallDisplay = async (toolMsg: StreamMsg) => {
+        if (!this.config.display?.showToolCalls || suppressDelivery) return;
+        try {
+          const text = formatToolCallDisplay(toolMsg);
+          await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
+        } catch (err) {
+          log.warn('Failed to send tool call display:', err instanceof Error ? err.message : err);
+        }
+      };
+
+      const bufferRunScopedDisplayEvent = (runId: string, streamMsg: StreamMsg) => {
+        if (streamMsg.type === 'reasoning') {
+          if (!this.config.display?.showReasoning) return;
+          const chunk = typeof streamMsg.content === 'string' ? streamMsg.content : '';
+          if (!chunk) return;
+          const lastEvent = bufferedDisplayEvents[bufferedDisplayEvents.length - 1];
+          if (lastEvent && lastEvent.kind === 'reasoning' && lastEvent.runId === runId) {
+            lastEvent.content += chunk;
+          } else {
+            bufferedDisplayEvents.push({ kind: 'reasoning', runId, content: chunk });
+          }
+          return;
+        }
+
+        if (streamMsg.type === 'tool_call') {
+          if (!this.config.display?.showToolCalls) return;
+          bufferedDisplayEvents.push({ kind: 'tool_call', runId, msg: streamMsg });
+        }
+      };
+
+      const flushBufferedDisplayEventsForRun = async (runId: string) => {
+        for (const event of bufferedDisplayEvents) {
+          if (event.runId !== runId) {
+            bufferedDisplayDropCount += 1;
+            continue;
+          }
+          if (event.kind === 'reasoning') {
+            await sendReasoningDisplay(event.content);
+            bufferedDisplayFlushCount += 1;
+            continue;
+          }
+
+          this.sessionManager.syncTodoToolCall(event.msg);
+          await sendToolCallDisplay(event.msg);
+          bufferedDisplayFlushCount += 1;
+        }
+        bufferedDisplayEvents.length = 0;
       };
       
       const finalizeMessage = async () => {
@@ -1077,6 +1280,43 @@ export class LettaBot implements AgentSession {
             break;
           }
           if (!firstChunkLogged) { lap('first stream chunk'); firstChunkLogged = true; }
+          const eventRunIds = this.normalizeStreamRunIds(streamMsg);
+          if (expectedForegroundRunId === null && eventRunIds.length > 0) {
+            if (streamMsg.type === 'assistant' || streamMsg.type === 'result') {
+              expectedForegroundRunId = eventRunIds[0];
+              expectedForegroundRunSource = streamMsg.type === 'assistant' ? 'assistant' : 'result';
+              log.info(`Selected foreground run for stream delivery (seq=${seq}, key=${convKey}, runId=${expectedForegroundRunId}, source=${streamMsg.type})`);
+              if (!bufferedDisplayFlushed && bufferedDisplayEvents.length > 0) {
+                await flushBufferedDisplayEventsForRun(expectedForegroundRunId);
+                bufferedDisplayFlushed = true;
+              }
+            } else {
+              // Do not lock to a run based on pre-assistant non-terminal events;
+              // these can belong to a concurrent background run.
+              const runId = eventRunIds[0];
+              if (runId && (streamMsg.type === 'reasoning' || streamMsg.type === 'tool_call')) {
+                bufferRunScopedDisplayEvent(runId, streamMsg);
+                filteredRunEventCount++;
+                log.info(`Buffering run-scoped pre-foreground display event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runId=${runId})`);
+                continue;
+              }
+              filteredRunEventCount++;
+              log.info(`Deferring run-scoped pre-foreground event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')})`);
+              continue;
+            }
+          } else if (expectedForegroundRunId && eventRunIds.length > 0 && !eventRunIds.includes(expectedForegroundRunId)) {
+            // Strict no-rebind policy: once foreground is selected, never switch.
+            sawCompetingRunEvent = true;
+            filteredRunEventCount++;
+            if (streamMsg.type === 'result') {
+              ignoredNonForegroundResultCount++;
+              log.warn(`Ignoring non-foreground result event (seq=${seq}, key=${convKey}, runIds=${eventRunIds.join(',')}, expected=${expectedForegroundRunId}, source=${expectedForegroundRunSource || 'unknown'})`);
+            } else {
+              log.info(`Skipping non-foreground stream event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')}, expected=${expectedForegroundRunId})`);
+            }
+            continue;
+          }
+
           receivedAnyData = true;
           msgTypeCounts[streamMsg.type] = (msgTypeCounts[streamMsg.type] || 0) + 1;
           
@@ -1100,17 +1340,7 @@ export class LettaBot implements AgentSession {
           // Flush reasoning buffer when type changes away from reasoning
           if (isSemanticType && lastMsgType === 'reasoning' && streamMsg.type !== 'reasoning' && reasoningBuffer.trim()) {
             log.info(`Reasoning: ${reasoningBuffer.trim()}`);
-            if (this.config.display?.showReasoning && !suppressDelivery) {
-              try {
-                const reasoning = formatReasoningDisplay(reasoningBuffer, adapter.id, this.config.display?.reasoningMaxChars);
-                await adapter.sendMessage({ chatId: msg.chatId, text: reasoning.text, threadId: msg.threadId, parseMode: reasoning.parseMode });
-                // Note: display messages don't set sentAnyMessage -- they're informational,
-                // not a substitute for an assistant response. Error handling and retry must
-                // still fire even if reasoning was displayed.
-              } catch (err) {
-                log.warn('Failed to send reasoning display:', err instanceof Error ? err.message : err);
-              }
-            }
+            await sendReasoningDisplay(reasoningBuffer);
             reasoningBuffer = '';
           }
 
@@ -1133,14 +1363,7 @@ export class LettaBot implements AgentSession {
             log.info(`>>> TOOL CALL: ${tcName} (id: ${tcId})`);
             sawNonAssistantSinceLastUuid = true;
             // Display tool call (args are fully accumulated by dedupedStream buffer-and-flush)
-            if (this.config.display?.showToolCalls && !suppressDelivery) {
-              try {
-                const text = formatToolCallDisplay(streamMsg);
-                await adapter.sendMessage({ chatId: msg.chatId, text, threadId: msg.threadId });
-              } catch (err) {
-                log.warn('Failed to send tool call display:', err instanceof Error ? err.message : err);
-              }
-            }
+            await sendToolCallDisplay(streamMsg);
           } else if (streamMsg.type === 'tool_result') {
             log.info(`<<< TOOL RESULT: error=${streamMsg.isError}, len=${(streamMsg as any).content?.length || 0}`);
             sawNonAssistantSinceLastUuid = true;
@@ -1258,6 +1481,8 @@ export class LettaBot implements AgentSession {
               break;
             }
 
+            sawForegroundResult = true;
+
             const resultText = typeof streamMsg.result === 'string' ? streamMsg.result : '';
             if (resultText.trim().length > 0) {
               const streamedTextTrimmed = streamedAssistantText.trim();
@@ -1274,22 +1499,33 @@ export class LettaBot implements AgentSession {
                   `(resultLen=${resultText.length}, streamLen=${streamedAssistantText.length}). ` +
                   `Preferring streamed content to avoid n-1 desync.`
                 );
-              } else if (streamedTextTrimmed.length === 0) {
+              } else if (streamedTextTrimmed.length === 0 && streamMsg.success !== false && !streamMsg.error) {
                 // Fallback for models/providers that only populate result text.
+                // Skip on error results -- the result field may contain reasoning
+                // text or other non-deliverable content (e.g. llm_api_error).
                 response = resultText;
-              } else if (!sentAnyMessage && response.trim().length === 0) {
+              } else if (!sentAnyMessage && response.trim().length === 0 && streamMsg.success !== false && !streamMsg.error) {
                 // Safety fallback: if we streamed text but nothing was
                 // delivered yet, allow a single result-based resend.
+                // Skip on error results for the same reason as above.
                 response = resultText;
               }
             }
             const hasResponse = response.trim().length > 0;
-            const isTerminalError = streamMsg.success === false || !!streamMsg.error;
             log.info(`Stream result: seq=${seq} success=${streamMsg.success}, hasResponse=${hasResponse}, resultLen=${resultText.length}`);
             if (response.trim().length > 0) {
               log.debug(`Stream result preview: seq=${seq} responsePreview=${response.trim().slice(0, 60)}`);
             }
             log.info(`Stream message counts:`, msgTypeCounts);
+            if (filteredRunEventCount > 0) {
+              log.info(`Filtered ${filteredRunEventCount} non-foreground event(s) from stream (seq=${seq}, key=${convKey}, expectedRunId=${expectedForegroundRunId || 'unknown'})`);
+            }
+            if (ignoredNonForegroundResultCount > 0) {
+              log.info(`Ignored ${ignoredNonForegroundResultCount} non-foreground result event(s) (seq=${seq}, key=${convKey}, expectedRunId=${expectedForegroundRunId || 'unknown'})`);
+            }
+            if (bufferedDisplayFlushCount > 0 || bufferedDisplayDropCount > 0) {
+              log.info(`Buffered display events: flushed=${bufferedDisplayFlushCount}, dropped=${bufferedDisplayDropCount} (seq=${seq}, key=${convKey}, expectedRunId=${expectedForegroundRunId || 'unknown'})`);
+            }
             if (streamMsg.error) {
               const detail = resultText.trim();
               const parts = [`error=${streamMsg.error}`];
@@ -1306,7 +1542,6 @@ export class LettaBot implements AgentSession {
             // Only retry if we never sent anything to the user. hasResponse tracks
             // the current buffer, but finalizeMessage() clears it on type changes.
             // sentAnyMessage is the authoritative "did we deliver output" flag.
-            const nothingDelivered = !hasResponse && !sentAnyMessage;
             const retryConvKey = this.resolveConversationKey(msg.channel, msg.chatId);
             const retryConvIdFromStore = (retryConvKey === 'shared'
               ? this.store.conversationId
@@ -1314,11 +1549,18 @@ export class LettaBot implements AgentSession {
             const retryConvId = (typeof streamMsg.conversationId === 'string' && streamMsg.conversationId.length > 0)
               ? streamMsg.conversationId
               : retryConvIdFromStore;
+            const initialRetryDecision = this.buildResultRetryDecision(
+              streamMsg,
+              resultText,
+              hasResponse,
+              sentAnyMessage,
+              lastErrorDetail,
+            );
 
             // Enrich opaque error detail from run metadata (single fast API call).
             // The wire protocol's stop_reason often just says "error" -- the run
             // metadata has the actual detail (e.g. "waiting for approval on a tool call").
-            if (isTerminalError && this.store.agentId &&
+            if (initialRetryDecision.isTerminalError && this.store.agentId &&
                 (!lastErrorDetail || lastErrorDetail.message === 'Agent stopped: error')) {
               const enriched = await getLatestRunError(this.store.agentId, retryConvId);
               if (enriched) {
@@ -1330,19 +1572,20 @@ export class LettaBot implements AgentSession {
               }
             }
 
-            // Don't retry on 409 CONFLICT -- the conversation is busy, retrying
-            // immediately will just get the same error and waste a session.
-            const isConflictError = lastErrorDetail?.message?.toLowerCase().includes('conflict') || false;
+            const retryDecision = this.buildResultRetryDecision(
+              streamMsg,
+              resultText,
+              hasResponse,
+              sentAnyMessage,
+              lastErrorDetail,
+            );
 
             // For approval-specific conflicts, attempt recovery directly (don't
             // enter the generic retry path which would just get another CONFLICT).
             // Use isApprovalError from run metadata as a fallback when the
             // error message doesn't contain the expected strings (e.g. when
             // the type=error event was lost and enrichment detected a stuck run).
-            const isApprovalConflict = (isConflictError &&
-              lastErrorDetail?.message?.toLowerCase().includes('waiting for approval')) ||
-              lastErrorDetail?.isApprovalError === true;
-            if (isApprovalConflict && !retried && this.store.agentId) {
+            if (retryDecision.isApprovalConflict && !retried && this.store.agentId) {
               if (retryConvId) {
                 log.info('Approval conflict detected -- attempting targeted recovery...');
                 this.sessionManager.invalidateSession(retryConvKey);
@@ -1361,35 +1604,16 @@ export class LettaBot implements AgentSession {
               }
             }
 
-            // Non-retryable errors: billing, auth, not-found -- skip recovery/retry
-            // entirely and surface the error to the user immediately.
-            // Check both the top-level message and the nested apiError.message
-            // (the billing/auth string can appear in either location).
-            const errMsg = lastErrorDetail?.message?.toLowerCase() || '';
-            const errApiMsg = (typeof lastErrorDetail?.apiError?.message === 'string'
-              ? lastErrorDetail.apiError.message : '').toLowerCase();
-            const errAny = errMsg + ' ' + errApiMsg;
-            const isNonRetryableError = isTerminalError && (
-              errAny.includes('out of credits') || errAny.includes('usage limit') ||
-              errAny.includes('401') || errAny.includes('403') ||
-              errAny.includes('unauthorized') || errAny.includes('forbidden') ||
-              errAny.includes('404') ||
-              ((errAny.includes('agent') || errAny.includes('conversation')) && errAny.includes('not found')) ||
-              errAny.includes('rate limit') || errAny.includes('429')
-            );
-
-            const shouldRetryForEmptyResult = streamMsg.success && resultText === '' && nothingDelivered;
-            const shouldRetryForErrorResult = isTerminalError && nothingDelivered && !isConflictError && !isNonRetryableError;
-            if (shouldRetryForEmptyResult || shouldRetryForErrorResult) {
-              if (shouldRetryForEmptyResult) {
+            if (retryDecision.shouldRetryForEmptyResult || retryDecision.shouldRetryForErrorResult) {
+              if (retryDecision.shouldRetryForEmptyResult) {
                 log.error(`Warning: Agent returned empty result with no response. stopReason=${streamMsg.stopReason || 'N/A'}, conv=${streamMsg.conversationId || 'N/A'}`);
               }
-              if (shouldRetryForErrorResult) {
+              if (retryDecision.shouldRetryForErrorResult) {
                 log.error(`Warning: Agent returned terminal error (error=${streamMsg.error}, stopReason=${streamMsg.stopReason || 'N/A'}) with no response.`);
               }
 
               if (!retried && this.store.agentId && retryConvId) {
-                const reason = shouldRetryForErrorResult ? 'error result' : 'empty result';
+                const reason = retryDecision.shouldRetryForErrorResult ? 'error result' : 'empty result';
                 log.info(`${reason} - attempting orphaned approval recovery...`);
                 this.sessionManager.invalidateSession(retryConvKey);
                 session = null;
@@ -1406,14 +1630,14 @@ export class LettaBot implements AgentSession {
 
                 // Some client-side approval failures do not surface as pending approvals.
                 // Retry once anyway in case the previous run terminated mid-tool cycle.
-                if (shouldRetryForErrorResult) {
+                if (retryDecision.shouldRetryForErrorResult) {
                   log.info('Retrying once after terminal error (no orphaned approvals detected)...');
                   return this.processMessage(msg, adapter, true);
                 }
               }
             }
 
-            if (isTerminalError && !hasResponse && !sentAnyMessage) {
+            if (retryDecision.isTerminalError && !hasResponse && !sentAnyMessage) {
               if (lastErrorDetail) {
                 response = formatApiErrorForUser(lastErrorDetail);
               } else {
@@ -1441,6 +1665,24 @@ export class LettaBot implements AgentSession {
         }
         log.info(`Skipping post-stream delivery -- cancelled (key=${convKey})`);
         return;
+      }
+
+      const missingForegroundTerminalResult =
+        expectedForegroundRunId !== null &&
+        !sawForegroundResult &&
+        sawCompetingRunEvent &&
+        !sentAnyMessage;
+
+      if (missingForegroundTerminalResult) {
+        log.warn(`Foreground run ended without terminal result after competing run activity (seq=${seq}, key=${convKey}, expectedRunId=${expectedForegroundRunId})`);
+        this.sessionManager.invalidateSession(convKey);
+        session = null;
+        response = '';
+        reasoningBuffer = '';
+        if (!retried) {
+          return this.processMessage(msg, adapter, true);
+        }
+        response = '(The agent stream ended before a foreground result was received. Please try again.)';
       }
 
       // Parse and execute XML directives (e.g. <actions><react emoji="eyes" /></actions>)
@@ -1496,28 +1738,7 @@ export class LettaBot implements AgentSession {
       }
       
       lap('message delivered');
-      // Handle no response
-      if (!sentAnyMessage) {
-        if (!receivedAnyData) {
-          log.error('Stream received NO DATA - possible stuck state');
-          await adapter.sendMessage({ 
-            chatId: msg.chatId, 
-            text: '(No response received -- the connection may have dropped or the server may be busy. Please try again. If this persists, /reset will start a fresh conversation.)', 
-            threadId: msg.threadId 
-          });
-        } else {
-          const hadToolActivity = (msgTypeCounts['tool_call'] || 0) > 0 || (msgTypeCounts['tool_result'] || 0) > 0;
-          if (hadToolActivity) {
-            log.info('Agent had tool activity but no assistant message - likely sent via tool');
-          } else {
-            await adapter.sendMessage({ 
-              chatId: msg.chatId, 
-              text: '(The agent processed your message but didn\'t produce a visible response. This can happen with certain prompts. Try rephrasing or sending again.)', 
-              threadId: msg.threadId 
-            });
-          }
-        }
-      }
+      await this.deliverNoVisibleResponseIfNeeded(msg, adapter, sentAnyMessage, receivedAnyData, msgTypeCounts);
       
     } catch (error) {
       log.error('Error processing message:', error);
@@ -1618,7 +1839,7 @@ export class LettaBot implements AgentSession {
           let sawStaleDuplicateResult = false;
           let approvalRetryPending = false;
           let usedMessageCli = false;
-          let lastErrorDetail: { message: string; stopReason: string; apiError?: Record<string, unknown>; isApprovalError?: boolean } | undefined;
+          let lastErrorDetail: StreamErrorDetail | undefined;
           for await (const msg of stream()) {
             if (msg.type === 'tool_call') {
               this.sessionManager.syncTodoToolCall(msg);
