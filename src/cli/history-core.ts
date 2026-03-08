@@ -107,7 +107,8 @@ export async function fetchDiscordHistory(chatId: string, limit: number, before?
       author: msg.author?.globalName || msg.author?.username || 'unknown',
       content: msg.content || '',
       timestamp: msg.timestamp,
-    })),
+    }))
+    .reverse(), // Reverse to show oldest first
   };
 
   return JSON.stringify(output, null, 2);
