@@ -325,6 +325,13 @@ describe('GET /portal', () => {
     expect(res.body).toContain('<title>LettaBot Config</title>');
   });
 
+  it('serves the config editor at /config (top-level alias)', async () => {
+    const res = await request(port, 'GET', '/config');
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('text/html');
+    expect(res.body).toContain('<title>LettaBot Config</title>');
+  });
+
   it('serves shared.css with correct MIME type', async () => {
     const res = await request(port, 'GET', '/portal/shared.css');
     expect(res.status).toBe(200);
@@ -395,32 +402,36 @@ describe('Config API', () => {
     expect(res.status).toBe(401);
   });
 
-  it('GET /api/v1/config/schema returns schema groups with fields', async () => {
+  it('GET /api/v1/config/schema returns global + agent schema', async () => {
     const res = await request(port, 'GET', '/api/v1/config/schema', undefined, {
       'x-api-key': TEST_API_KEY,
     });
     expect(res.status).toBe(200);
     const body = JSON.parse(res.body);
-    expect(Array.isArray(body.schema)).toBe(true);
-    expect(body.schema.length).toBeGreaterThan(0);
 
-    // Check structure of first group
-    const firstGroup = body.schema[0];
+    // Global schema
+    expect(Array.isArray(body.schema.global)).toBe(true);
+    expect(body.schema.global.length).toBeGreaterThan(0);
+    const globalIds = body.schema.global.map((g: any) => g.id);
+    expect(globalIds).toContain('server');
+    expect(globalIds).toContain('security');
+
+    // Check structure of first global group
+    const firstGroup = body.schema.global[0];
     expect(firstGroup.id).toBeDefined();
     expect(firstGroup.label).toBeDefined();
     expect(Array.isArray(firstGroup.fields)).toBe(true);
+    expect(firstGroup.fields[0].key).toBeDefined();
+    expect(firstGroup.fields[0].type).toBeDefined();
 
-    // Check a field has the expected shape
-    const firstField = firstGroup.fields[0];
-    expect(firstField.key).toBeDefined();
-    expect(firstField.type).toBeDefined();
-    expect(firstField.label).toBeDefined();
-
-    // Check that known groups exist
-    const groupIds = body.schema.map((g: any) => g.id);
-    expect(groupIds).toContain('server');
-    expect(groupIds).toContain('features');
-    expect(groupIds).toContain('discord');
+    // Agent schema
+    expect(body.schema.agent).toBeDefined();
+    expect(Array.isArray(body.schema.agent.info)).toBe(true);
+    expect(Array.isArray(body.schema.agent.features)).toBe(true);
+    expect(Array.isArray(body.schema.agent.conversations)).toBe(true);
+    expect(body.schema.agent.channels.discord).toBeDefined();
+    expect(body.schema.agent.channels.telegram).toBeDefined();
+    expect(Array.isArray(body.schema.agent.groupConfig)).toBe(true);
   });
 
   it('PUT /api/v1/config returns 401 without API key', async () => {

@@ -727,12 +727,20 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
       return;
     }
 
-    // Route: GET /portal/* - Admin portal static files
-    if (req.url?.startsWith('/portal') && req.method === 'GET') {
-      let portalPath = req.url.replace(/^\/portal\/?/, '') || 'index.html';
-      // Strip query strings
-      portalPath = portalPath.split('?')[0];
-      // /portal/config → config.html
+    // Route: GET /portal/* and /config — Admin portal static files
+    // Serve /config as a top-level alias for the config editor
+    const portalPrefix = req.url?.startsWith('/portal') ? '/portal' : req.url?.startsWith('/config') ? '/config' : null;
+    if (portalPrefix && req.method === 'GET') {
+      let portalPath: string;
+      if (portalPrefix === '/config') {
+        // /config → config.html, /config/foo → not found (config is a single page)
+        const rest = req.url!.replace(/^\/config\/?/, '').split('?')[0];
+        portalPath = rest ? rest : 'config.html';
+      } else {
+        // /portal → index.html, /portal/ → index.html, /portal/shared.css → shared.css
+        portalPath = req.url!.replace(/^\/portal\/?/, '').split('?')[0] || 'index.html';
+      }
+      // Extensionless paths → .html (e.g. /portal/config → config.html)
       if (portalPath && !path.extname(portalPath)) portalPath += '.html';
 
       if (servePortalFile(res, portalPath)) return;
@@ -989,120 +997,160 @@ interface SchemaGroup {
   fields: SchemaField[];
 }
 
-const CONFIG_SCHEMA: SchemaGroup[] = [
-  {
-    id: 'server',
-    label: 'Server',
-    fields: [
-      { key: 'server.mode', type: 'enum', label: 'Mode', options: ['api', 'docker'], default: 'api', description: 'api = Letta Cloud, docker = self-hosted', restartRequired: true },
-      { key: 'server.baseUrl', type: 'string', label: 'Base URL', description: 'Letta server URL (docker mode only)', restartRequired: true },
-      { key: 'server.apiKey', type: 'secret', label: 'API Key', description: 'Letta API key', restartRequired: true },
-      { key: 'server.logLevel', type: 'enum', label: 'Log Level', options: ['fatal', 'error', 'warn', 'info', 'debug', 'trace'], default: 'info' },
-      { key: 'server.api.port', type: 'number', label: 'API Port', default: 8080, description: 'Port for the lettabot HTTP API', restartRequired: true },
-      { key: 'server.api.host', type: 'string', label: 'API Host', default: '127.0.0.1', description: 'Bind address (0.0.0.0 for Docker)', restartRequired: true },
-      { key: 'server.api.corsOrigin', type: 'string', label: 'CORS Origin', description: 'Allowed CORS origin' },
-    ],
-  },
-  {
-    id: 'features',
-    label: 'Features',
-    fields: [
-      { key: 'features.cron', type: 'boolean', label: 'Cron Jobs', description: 'Enable scheduled cron tasks' },
-      { key: 'features.heartbeat.enabled', type: 'boolean', label: 'Heartbeat', description: 'Send periodic heartbeat messages' },
-      { key: 'features.heartbeat.intervalMin', type: 'number', label: 'Heartbeat Interval (min)', default: 60, description: 'Minutes between heartbeats' },
-      { key: 'features.heartbeat.skipRecentUserMin', type: 'number', label: 'Skip After User (min)', default: 0, description: 'Skip heartbeat if user messaged within N minutes' },
-      { key: 'features.heartbeat.prompt', type: 'string', label: 'Heartbeat Prompt', description: 'Custom heartbeat message' },
-      { key: 'features.heartbeat.target', type: 'string', label: 'Heartbeat Target', description: 'Delivery target (e.g. telegram:12345)' },
-      { key: 'features.memfs', type: 'boolean', label: 'Memory Filesystem', description: 'Enable git-backed context repository' },
-      { key: 'features.syncSystemPrompt', type: 'boolean', label: 'Sync System Prompt', default: true, description: 'Sync lettabot prompt to agent on startup' },
-      { key: 'features.maxToolCalls', type: 'number', label: 'Max Tool Calls', default: 100, description: 'Abort if agent calls this many tools in one turn' },
-      { key: 'features.inlineImages', type: 'boolean', label: 'Inline Images', default: true, description: 'Send images directly to the LLM' },
-      { key: 'features.display.toolCalls', type: 'boolean', label: 'Show Tool Calls', description: 'Display tool calls in channel output' },
-      { key: 'features.display.reasoning', type: 'boolean', label: 'Show Reasoning', description: 'Display thinking/reasoning in channel output' },
-      { key: 'features.allowedTools', type: 'string[]', label: 'Allowed Tools', description: 'Global tool whitelist' },
-      { key: 'features.disallowedTools', type: 'string[]', label: 'Disallowed Tools', description: 'Global tool blocklist' },
-    ],
-  },
-  {
-    id: 'conversations',
-    label: 'Conversations',
-    fields: [
-      { key: 'conversations.mode', type: 'enum', label: 'Mode', options: ['disabled', 'shared', 'per-channel', 'per-chat'], default: 'shared', description: 'Conversation routing strategy' },
-      { key: 'conversations.heartbeat', type: 'string', label: 'Heartbeat Routing', description: 'dedicated, last-active, or channel name' },
-      { key: 'conversations.perChannel', type: 'string[]', label: 'Per-Channel Keys', description: 'Channels that always have their own conversation' },
-      { key: 'conversations.maxSessions', type: 'number', label: 'Max Sessions', default: 10, description: 'Max concurrent sessions in per-chat mode (LRU eviction)' },
-      { key: 'conversations.reuseSession', type: 'boolean', label: 'Reuse Session', default: true, description: 'Reuse SDK subprocess across messages' },
-    ],
-  },
-  {
-    id: 'transcription',
-    label: 'Transcription',
-    fields: [
-      { key: 'transcription.provider', type: 'enum', label: 'Provider', options: ['openai', 'mistral'], description: 'Voice transcription provider' },
-      { key: 'transcription.apiKey', type: 'secret', label: 'API Key', description: 'Falls back to OPENAI_API_KEY / MISTRAL_API_KEY' },
-      { key: 'transcription.model', type: 'string', label: 'Model', description: 'Default: whisper-1 (OpenAI) or voxtral-mini-latest (Mistral)' },
-    ],
-  },
-  {
-    id: 'tts',
-    label: 'Text-to-Speech',
-    fields: [
-      { key: 'tts.provider', type: 'enum', label: 'Provider', options: ['elevenlabs', 'openai'], default: 'elevenlabs' },
-      { key: 'tts.apiKey', type: 'secret', label: 'API Key' },
-      { key: 'tts.voiceId', type: 'string', label: 'Voice ID', description: 'ElevenLabs voice ID or OpenAI voice name' },
-      { key: 'tts.model', type: 'string', label: 'Model', description: 'Provider-specific model ID' },
-    ],
-  },
-  {
-    id: 'attachments',
-    label: 'Attachments',
-    fields: [
-      { key: 'attachments.maxMB', type: 'number', label: 'Max Size (MB)', description: 'Maximum attachment size' },
-      { key: 'attachments.maxAgeDays', type: 'number', label: 'Max Age (days)', description: 'Auto-delete attachments older than this' },
-    ],
-  },
-  {
-    id: 'security',
-    label: 'Security',
-    fields: [
-      { key: 'security.redaction.secrets', type: 'boolean', label: 'Redact Secrets', default: true, description: 'Redact API keys/tokens in outbound messages' },
-      { key: 'security.redaction.pii', type: 'boolean', label: 'Redact PII', default: false, description: 'Redact emails, phone numbers in outbound messages' },
-    ],
-  },
-  {
-    id: 'discord',
-    label: 'Discord',
-    fields: [
-      { key: 'channels.discord.enabled', type: 'boolean', label: 'Enabled', default: true, restartRequired: true },
-      { key: 'channels.discord.token', type: 'secret', label: 'Bot Token', restartRequired: true },
-      { key: 'channels.discord.dmPolicy', type: 'enum', label: 'DM Policy', options: ['pairing', 'allowlist', 'open'], default: 'pairing' },
-      { key: 'channels.discord.allowedUsers', type: 'string[]', label: 'Allowed Users', description: 'User IDs for allowlist policy' },
-      { key: 'channels.discord.streaming', type: 'boolean', label: 'Streaming', description: 'Stream responses via progressive edits' },
-      { key: 'channels.discord.ignoreBotReactions', type: 'boolean', label: 'Ignore Bot Reactions', default: true, description: 'Ignore emoji reactions from bots' },
-      { key: 'channels.discord.excludeChannels', type: 'string[]', label: 'Exclude Channels', description: 'Channel/guild IDs to completely ignore' },
-      { key: 'channels.discord.memberEvents', type: 'boolean', label: 'Member Events', description: 'Enable member join/leave events' },
-    ],
-  },
-  {
-    id: 'telegram',
-    label: 'Telegram',
-    fields: [
-      { key: 'channels.telegram.enabled', type: 'boolean', label: 'Enabled', default: true, restartRequired: true },
-      { key: 'channels.telegram.token', type: 'secret', label: 'Bot Token', restartRequired: true },
-      { key: 'channels.telegram.dmPolicy', type: 'enum', label: 'DM Policy', options: ['pairing', 'allowlist', 'open'], default: 'pairing' },
-      { key: 'channels.telegram.allowedUsers', type: 'string[]', label: 'Allowed Users' },
-      { key: 'channels.telegram.streaming', type: 'boolean', label: 'Streaming' },
-    ],
-  },
-  {
-    id: 'slack',
-    label: 'Slack',
-    fields: [
-      { key: 'channels.slack.enabled', type: 'boolean', label: 'Enabled', default: true, restartRequired: true },
-      { key: 'channels.slack.botToken', type: 'secret', label: 'Bot Token (xoxb-...)', restartRequired: true },
-      { key: 'channels.slack.appToken', type: 'secret', label: 'App Token (xapp-...)', restartRequired: true },
-      { key: 'channels.slack.dmPolicy', type: 'enum', label: 'DM Policy', options: ['pairing', 'allowlist', 'open'], default: 'pairing' },
-      { key: 'channels.slack.allowedUsers', type: 'string[]', label: 'Allowed Users' },
-    ],
-  },
+// Group channel config fields (shared across Discord, Telegram, Slack, etc.)
+const GROUP_CONFIG_FIELDS: SchemaField[] = [
+  { key: 'mode', type: 'enum', label: 'Mode', options: ['open', 'listen', 'mention-only', 'off'], default: 'open', description: 'How the bot engages in this group' },
+  { key: 'allowedUsers', type: 'string[]', label: 'Allowed Users', description: 'Only process messages from these user IDs' },
+  { key: 'receiveBotMessages', type: 'boolean', label: 'Receive Bot Messages', default: false, description: 'Process messages from other bots' },
+  { key: 'dailyLimit', type: 'number', label: 'Daily Limit', description: 'Max bot triggers per day in this group' },
+  { key: 'dailyUserLimit', type: 'number', label: 'Daily User Limit', description: 'Max triggers per user per day' },
 ];
+
+// Per-channel schema definitions (key prefix is relative to the channel object)
+const DISCORD_FIELDS: SchemaField[] = [
+  { key: 'enabled', type: 'boolean', label: 'Enabled', default: true, restartRequired: true },
+  { key: 'token', type: 'secret', label: 'Bot Token', restartRequired: true },
+  { key: 'dmPolicy', type: 'enum', label: 'DM Policy', options: ['pairing', 'allowlist', 'open'], default: 'pairing' },
+  { key: 'allowedUsers', type: 'string[]', label: 'Allowed Users', description: 'User IDs for allowlist policy' },
+  { key: 'streaming', type: 'boolean', label: 'Streaming', description: 'Stream responses via progressive edits' },
+  { key: 'groupDebounceSec', type: 'number', label: 'Group Debounce (sec)', default: 5, description: 'Debounce interval for group messages' },
+  { key: 'instantGroups', type: 'string[]', label: 'Instant Groups', description: 'Guild/channel IDs that bypass batching' },
+  { key: 'excludeChannels', type: 'string[]', label: 'Exclude Channels', description: 'Channel/guild IDs to completely ignore' },
+  { key: 'ignoreBotReactions', type: 'boolean', label: 'Ignore Bot Reactions', default: true, description: 'Ignore emoji reactions from bots' },
+  { key: 'memberEvents', type: 'boolean', label: 'Member Events', description: 'Enable member join/leave events' },
+  { key: 'welcomeChannel', type: 'string', label: 'Welcome Channel', description: 'Channel ID for join/leave events' },
+];
+
+const TELEGRAM_FIELDS: SchemaField[] = [
+  { key: 'enabled', type: 'boolean', label: 'Enabled', default: true, restartRequired: true },
+  { key: 'token', type: 'secret', label: 'Bot Token', restartRequired: true },
+  { key: 'dmPolicy', type: 'enum', label: 'DM Policy', options: ['pairing', 'allowlist', 'open'], default: 'pairing' },
+  { key: 'allowedUsers', type: 'string[]', label: 'Allowed Users' },
+  { key: 'streaming', type: 'boolean', label: 'Streaming' },
+  { key: 'groupDebounceSec', type: 'number', label: 'Group Debounce (sec)', default: 5 },
+  { key: 'instantGroups', type: 'string[]', label: 'Instant Groups' },
+  { key: 'mentionPatterns', type: 'string[]', label: 'Mention Patterns', description: 'Regex patterns for mention detection' },
+  { key: 'excludeChannels', type: 'string[]', label: 'Exclude Channels' },
+];
+
+const SLACK_FIELDS: SchemaField[] = [
+  { key: 'enabled', type: 'boolean', label: 'Enabled', default: true, restartRequired: true },
+  { key: 'botToken', type: 'secret', label: 'Bot Token (xoxb-...)', restartRequired: true },
+  { key: 'appToken', type: 'secret', label: 'App Token (xapp-...)', restartRequired: true },
+  { key: 'dmPolicy', type: 'enum', label: 'DM Policy', options: ['pairing', 'allowlist', 'open'], default: 'pairing' },
+  { key: 'allowedUsers', type: 'string[]', label: 'Allowed Users' },
+  { key: 'streaming', type: 'boolean', label: 'Streaming' },
+  { key: 'groupDebounceSec', type: 'number', label: 'Group Debounce (sec)', default: 5 },
+  { key: 'instantGroups', type: 'string[]', label: 'Instant Groups' },
+  { key: 'excludeChannels', type: 'string[]', label: 'Exclude Channels' },
+];
+
+const SIGNAL_FIELDS: SchemaField[] = [
+  { key: 'enabled', type: 'boolean', label: 'Enabled', default: true, restartRequired: true },
+  { key: 'phone', type: 'secret', label: 'Phone Number', restartRequired: true },
+  { key: 'dmPolicy', type: 'enum', label: 'DM Policy', options: ['pairing', 'allowlist', 'open'], default: 'pairing' },
+  { key: 'allowedUsers', type: 'string[]', label: 'Allowed Users' },
+  { key: 'selfChat', type: 'boolean', label: 'Self Chat', default: true },
+  { key: 'mentionPatterns', type: 'string[]', label: 'Mention Patterns' },
+  { key: 'groupDebounceSec', type: 'number', label: 'Group Debounce (sec)', default: 5 },
+  { key: 'instantGroups', type: 'string[]', label: 'Instant Groups' },
+  { key: 'excludeChannels', type: 'string[]', label: 'Exclude Channels' },
+];
+
+const WHATSAPP_FIELDS: SchemaField[] = [
+  { key: 'enabled', type: 'boolean', label: 'Enabled', default: true, restartRequired: true },
+  { key: 'dmPolicy', type: 'enum', label: 'DM Policy', options: ['pairing', 'allowlist', 'open'], default: 'pairing' },
+  { key: 'allowedUsers', type: 'string[]', label: 'Allowed Users' },
+  { key: 'selfChat', type: 'boolean', label: 'Self Chat' },
+  { key: 'groupPolicy', type: 'enum', label: 'Group Policy', options: ['open', 'disabled', 'allowlist'], default: 'open' },
+  { key: 'mentionPatterns', type: 'string[]', label: 'Mention Patterns' },
+  { key: 'groupDebounceSec', type: 'number', label: 'Group Debounce (sec)', default: 5 },
+  { key: 'instantGroups', type: 'string[]', label: 'Instant Groups' },
+];
+
+const AGENT_INFO_FIELDS: SchemaField[] = [
+  { key: 'name', type: 'string', label: 'Name', required: true, restartRequired: true },
+  { key: 'id', type: 'string', label: 'Agent ID', description: 'Existing Letta agent ID (skip creation)' },
+  { key: 'displayName', type: 'string', label: 'Display Name', description: 'Prefix for outbound messages' },
+];
+
+const FEATURES_FIELDS: SchemaField[] = [
+  { key: 'features.cron', type: 'boolean', label: 'Cron Jobs', description: 'Enable scheduled cron tasks' },
+  { key: 'features.heartbeat.enabled', type: 'boolean', label: 'Heartbeat', description: 'Send periodic heartbeat messages' },
+  { key: 'features.heartbeat.intervalMin', type: 'number', label: 'Heartbeat Interval (min)', default: 60 },
+  { key: 'features.heartbeat.skipRecentUserMin', type: 'number', label: 'Skip After User (min)', default: 0 },
+  { key: 'features.heartbeat.prompt', type: 'string', label: 'Heartbeat Prompt' },
+  { key: 'features.heartbeat.target', type: 'string', label: 'Heartbeat Target', description: 'e.g. telegram:12345' },
+  { key: 'features.memfs', type: 'boolean', label: 'Memory Filesystem', description: 'Enable git-backed context repository' },
+  { key: 'features.syncSystemPrompt', type: 'boolean', label: 'Sync System Prompt', default: true },
+  { key: 'features.maxToolCalls', type: 'number', label: 'Max Tool Calls', default: 100 },
+  { key: 'features.inlineImages', type: 'boolean', label: 'Inline Images', default: true },
+  { key: 'features.display.toolCalls', type: 'boolean', label: 'Show Tool Calls' },
+  { key: 'features.display.reasoning', type: 'boolean', label: 'Show Reasoning' },
+  { key: 'features.allowedTools', type: 'string[]', label: 'Allowed Tools' },
+  { key: 'features.disallowedTools', type: 'string[]', label: 'Disallowed Tools' },
+];
+
+const CONVERSATIONS_FIELDS: SchemaField[] = [
+  { key: 'conversations.mode', type: 'enum', label: 'Mode', options: ['disabled', 'shared', 'per-channel', 'per-chat'], default: 'shared' },
+  { key: 'conversations.heartbeat', type: 'string', label: 'Heartbeat Routing', description: 'dedicated, last-active, or channel name' },
+  { key: 'conversations.perChannel', type: 'string[]', label: 'Per-Channel Keys' },
+  { key: 'conversations.maxSessions', type: 'number', label: 'Max Sessions', default: 10 },
+  { key: 'conversations.reuseSession', type: 'boolean', label: 'Reuse Session', default: true },
+];
+
+const CONFIG_SCHEMA = {
+  global: [
+    {
+      id: 'server', label: 'Server', fields: [
+        { key: 'server.mode', type: 'enum' as FieldType, label: 'Mode', options: ['api', 'docker'], default: 'api', description: 'api = Letta Cloud, docker = self-hosted', restartRequired: true },
+        { key: 'server.baseUrl', type: 'string' as FieldType, label: 'Base URL', description: 'Letta server URL (docker mode only)', restartRequired: true },
+        { key: 'server.apiKey', type: 'secret' as FieldType, label: 'API Key', description: 'Letta API key', restartRequired: true },
+        { key: 'server.logLevel', type: 'enum' as FieldType, label: 'Log Level', options: ['fatal', 'error', 'warn', 'info', 'debug', 'trace'], default: 'info' },
+        { key: 'server.api.port', type: 'number' as FieldType, label: 'API Port', default: 8080, restartRequired: true },
+        { key: 'server.api.host', type: 'string' as FieldType, label: 'API Host', default: '127.0.0.1', restartRequired: true },
+        { key: 'server.api.corsOrigin', type: 'string' as FieldType, label: 'CORS Origin' },
+      ],
+    },
+    {
+      id: 'transcription', label: 'Transcription', fields: [
+        { key: 'transcription.provider', type: 'enum' as FieldType, label: 'Provider', options: ['openai', 'mistral'] },
+        { key: 'transcription.apiKey', type: 'secret' as FieldType, label: 'API Key' },
+        { key: 'transcription.model', type: 'string' as FieldType, label: 'Model' },
+      ],
+    },
+    {
+      id: 'tts', label: 'Text-to-Speech', fields: [
+        { key: 'tts.provider', type: 'enum' as FieldType, label: 'Provider', options: ['elevenlabs', 'openai'], default: 'elevenlabs' },
+        { key: 'tts.apiKey', type: 'secret' as FieldType, label: 'API Key' },
+        { key: 'tts.voiceId', type: 'string' as FieldType, label: 'Voice ID' },
+        { key: 'tts.model', type: 'string' as FieldType, label: 'Model' },
+      ],
+    },
+    {
+      id: 'attachments', label: 'Attachments', fields: [
+        { key: 'attachments.maxMB', type: 'number' as FieldType, label: 'Max Size (MB)' },
+        { key: 'attachments.maxAgeDays', type: 'number' as FieldType, label: 'Max Age (days)' },
+      ],
+    },
+    {
+      id: 'security', label: 'Security', fields: [
+        { key: 'security.redaction.secrets', type: 'boolean' as FieldType, label: 'Redact Secrets', default: true },
+        { key: 'security.redaction.pii', type: 'boolean' as FieldType, label: 'Redact PII', default: false },
+      ],
+    },
+  ] as SchemaGroup[],
+  agent: {
+    info: AGENT_INFO_FIELDS,
+    features: FEATURES_FIELDS,
+    conversations: CONVERSATIONS_FIELDS,
+    channels: {
+      discord: { label: 'Discord', fields: DISCORD_FIELDS },
+      telegram: { label: 'Telegram', fields: TELEGRAM_FIELDS },
+      slack: { label: 'Slack', fields: SLACK_FIELDS },
+      signal: { label: 'Signal', fields: SIGNAL_FIELDS },
+      whatsapp: { label: 'WhatsApp', fields: WHATSAPP_FIELDS },
+    },
+    groupConfig: GROUP_CONFIG_FIELDS,
+  },
+};
