@@ -696,6 +696,17 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
         const current = loadConfigStrict();
         const merged = deepMergeConfig(current as Record<string, any>, parsed.config) as LettaBotConfig;
 
+        // When using multi-agent format, strip redundant legacy top-level keys
+        // that loadConfigStrict() adds during normalization
+        if (Array.isArray(merged.agents) && merged.agents.length > 0) {
+          const m = merged as Record<string, any>;
+          delete m.agent;
+          if (m.channels && Object.keys(m.channels).length === 0) delete m.channels;
+          // Only delete these if they exist on agents (not global overrides)
+          if (merged.agents[0]?.features && m.features) delete m.features;
+          if (merged.agents[0]?.conversations && m.conversations) delete m.conversations;
+        }
+
         // Save and validate by re-reading (loadConfigStrict throws on invalid config)
         saveConfig(merged);
         try {

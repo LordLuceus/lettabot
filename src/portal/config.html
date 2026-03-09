@@ -233,13 +233,22 @@ function getChangedOrConfig(dotPath) {
 }
 
 function getAgents() {
-  return Array.isArray(config.agents) && config.agents.length > 0
-    ? config.agents
+  const configAgents = Array.isArray(config.agents) && config.agents.length > 0
+    ? [...config.agents]
     : [{ name: config.agent?.name || 'default', ...config.agent, channels: config.channels, features: config.features, conversations: config.conversations }];
+
+  // Include agents that only exist in changes (newly added)
+  if (Array.isArray(changes.agents)) {
+    for (let i = configAgents.length; i < changes.agents.length; i++) {
+      if (changes.agents[i]) configAgents.push(changes.agents[i]);
+    }
+  }
+  return configAgents;
 }
 
 function isMultiAgent() {
-  return Array.isArray(config.agents) && config.agents.length > 0;
+  return (Array.isArray(config.agents) && config.agents.length > 0) ||
+         (Array.isArray(changes.agents) && changes.agents.length > 0);
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -263,13 +272,9 @@ function renderSidebar() {
     nav.append(makeSidebarLink(prefix + '-features', 'Features', true));
     nav.append(makeSidebarLink(prefix + '-conversations', 'Conversations', true));
 
-    // Channel sub-links
-    const channels = agents[i].channels || {};
+    // Channel sub-links — show all channel types
     for (const chKey of Object.keys(schema.agent.channels || {})) {
-      const ch = channels[chKey];
-      if (ch && (ch.enabled !== false || ch.token || ch.botToken)) {
-        nav.append(makeSidebarLink(prefix + '-ch-' + chKey, schema.agent.channels[chKey].label, true));
-      }
+      nav.append(makeSidebarLink(prefix + '-ch-' + chKey, schema.agent.channels[chKey].label, true));
     }
   }
 
@@ -353,11 +358,9 @@ function renderEditor() {
     convSection.append(convFs);
     editor.append(convSection);
 
-    // Channels
+    // Channels — show all channel types
     for (const [chKey, chSchema] of Object.entries(schema.agent.channels || {})) {
       const chData = agent.channels?.[chKey];
-      // Always show if data exists or it's a common channel
-      if (!chData && !['discord', 'telegram', 'slack'].includes(chKey)) continue;
 
       const chSection = el('section', { className: 'config-section', id: idPrefix + '-ch-' + chKey });
       const chFs = el('fieldset', null, el('legend', null, agentName + ' \u2014 ' + chSchema.label));
@@ -367,20 +370,45 @@ function renderEditor() {
         chFs.append(buildField(field, chPath + field.key));
       }
 
-      // Group config — show existing groups + add button
-      const groupsData = chData?.groups || {};
-      const groupKeys = Object.keys(groupsData);
-      if (groupKeys.length > 0 || schema.agent.groupConfig) {
+      // Group config
+      if (schema.agent.groupConfig) {
         const groupContainer = el('div', { style: 'margin-top: 12px;' });
         groupContainer.append(el('p', { style: 'font-size: 13px; color: #ccc; font-weight: 500; margin-bottom: 8px;' }, 'Group Settings'));
 
-        for (const gKey of groupKeys) {
-          const gFs = el('fieldset', { className: 'group-fieldset' }, el('legend', null, gKey === '*' ? 'Default (*)' : gKey));
-          for (const gField of (schema.agent.groupConfig || [])) {
-            gFs.append(buildField(gField, chPath + 'groups.' + gKey + '.' + gField.key));
-          }
-          groupContainer.append(gFs);
+        // Merge group keys from config + changes
+        const configGroups = chData?.groups || {};
+        const changedGroups = getNestedValue(changes, chPath + 'groups') || {};
+        const allGroupKeys = [...new Set([...Object.keys(configGroups), ...Object.keys(changedGroups)])];
+        for (const gKey of allGroupKeys) {
+          groupContainer.append(buildGroupFieldset(gKey, chPath, schema.agent.groupConfig));
         }
+
+        // Add group button
+        const addRow = el('div', { style: 'display: flex; gap: 4px; align-items: center; margin-top: 8px;' });
+        const addInput = el('input', {
+          type: 'text',
+          placeholder: 'Group ID (or * for default)',
+          'aria-label': 'New group ID for ' + chSchema.label,
+          style: 'flex: 1;',
+        });
+        const addBtn = el('button', {
+          type: 'button',
+          className: 'btn btn-ghost btn-sm',
+          onClick: () => {
+            const gId = addInput.value.trim();
+            if (!gId) { showToast('Enter a group ID', true); return; }
+            // Initialize empty group in changes so fields render
+            setNestedValue(changes, chPath + 'groups.' + gId + '.mode', null);
+            addInput.value = '';
+            renderEditor();
+            observeSections();
+            // Focus the new group fieldset
+            const newFs = document.getElementById('group-' + idPrefix + '-' + chKey + '-' + gId);
+            if (newFs) newFs.scrollIntoView({ behavior: 'smooth' });
+          },
+        }, '+ Add Group');
+        addRow.append(addInput, addBtn);
+        groupContainer.append(addRow);
 
         chFs.append(groupContainer);
       }
@@ -389,6 +417,41 @@ function renderEditor() {
       editor.append(chSection);
     }
   }
+
+  // Add Agent button
+  if (multi) {
+    const addAgentSection = el('section', { className: 'config-section', id: 'add-agent' });
+    const addAgentBtn = el('button', {
+      type: 'button',
+      className: 'btn btn-ghost',
+      style: 'width: 100%;',
+      onClick: () => {
+        const name = prompt('Agent name:');
+        if (!name || !name.trim()) return;
+        // Add a new agent to the changes
+        const idx = agents.length;
+        setNestedValue(changes, 'agents.' + idx + '.name', name.trim());
+        setNestedValue(changes, 'agents.' + idx + '.channels', {});
+        renderEditor();
+        renderSidebar();
+        observeSections();
+        updateSaveBtn();
+        document.getElementById('agent-' + idx + '-info')?.scrollIntoView({ behavior: 'smooth' });
+      },
+    }, '+ Add Agent');
+    addAgentSection.append(addAgentBtn);
+    editor.append(addAgentSection);
+  }
+}
+
+function buildGroupFieldset(gKey, chPath, groupFields) {
+  const gFs = el('fieldset', { className: 'group-fieldset' },
+    el('legend', null, gKey === '*' ? 'Default (*)' : gKey)
+  );
+  for (const gField of groupFields) {
+    gFs.append(buildField(gField, chPath + 'groups.' + gKey + '.' + gField.key));
+  }
+  return gFs;
 }
 
 // ── Field builders ────────────────────────────────────────────────────────────
