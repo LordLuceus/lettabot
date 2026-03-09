@@ -310,4 +310,132 @@ describe('GET /portal', () => {
     expect(res.headers['content-type']).toContain('text/html');
     expect(res.body).toContain('<title>LettaBot Portal</title>');
   });
+
+  it('serves portal/index.html for /portal/', async () => {
+    const res = await request(port, 'GET', '/portal/');
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('text/html');
+    expect(res.body).toContain('<title>LettaBot Portal</title>');
+  });
+
+  it('serves the config editor at /portal/config', async () => {
+    const res = await request(port, 'GET', '/portal/config');
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('text/html');
+    expect(res.body).toContain('<title>LettaBot Config</title>');
+  });
+
+  it('serves shared.css with correct MIME type', async () => {
+    const res = await request(port, 'GET', '/portal/shared.css');
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('text/css');
+    expect(res.body).toContain('box-sizing');
+  });
+
+  it('serves shared.js with correct MIME type', async () => {
+    const res = await request(port, 'GET', '/portal/shared.js');
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('application/javascript');
+    expect(res.body).toContain('apiFetch');
+  });
+
+  it('returns 404 for non-existent portal files', async () => {
+    const res = await request(port, 'GET', '/portal/does-not-exist');
+    expect(res.status).toBe(404);
+  });
+
+  it('blocks path traversal attempts', async () => {
+    const res = await request(port, 'GET', '/portal/../api/server.ts');
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('Config API', () => {
+  let server: http.Server;
+  let port: number;
+
+  beforeAll(async () => {
+    server = createApiServer(createMockRouter(), {
+      port: TEST_PORT,
+      apiKey: TEST_API_KEY,
+      host: '127.0.0.1',
+    });
+    await new Promise<void>((resolve) => {
+      if (server.listening) { resolve(); return; }
+      server.once('listening', resolve);
+    });
+    port = getPort(server);
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it('GET /api/v1/config returns 401 without API key', async () => {
+    const res = await request(port, 'GET', '/api/v1/config');
+    expect(res.status).toBe(401);
+  });
+
+  it('GET /api/v1/config returns config with sensitive fields masked', async () => {
+    const res = await request(port, 'GET', '/api/v1/config', undefined, {
+      'x-api-key': TEST_API_KEY,
+    });
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.config).toBeDefined();
+    expect(body.config.server).toBeDefined();
+    // API key should be masked if set
+    if (body.config.server.apiKey) {
+      expect(body.config.server.apiKey).toBe('\u2022\u2022\u2022\u2022\u2022\u2022');
+    }
+  });
+
+  it('GET /api/v1/config/schema returns 401 without API key', async () => {
+    const res = await request(port, 'GET', '/api/v1/config/schema');
+    expect(res.status).toBe(401);
+  });
+
+  it('GET /api/v1/config/schema returns schema groups with fields', async () => {
+    const res = await request(port, 'GET', '/api/v1/config/schema', undefined, {
+      'x-api-key': TEST_API_KEY,
+    });
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(Array.isArray(body.schema)).toBe(true);
+    expect(body.schema.length).toBeGreaterThan(0);
+
+    // Check structure of first group
+    const firstGroup = body.schema[0];
+    expect(firstGroup.id).toBeDefined();
+    expect(firstGroup.label).toBeDefined();
+    expect(Array.isArray(firstGroup.fields)).toBe(true);
+
+    // Check a field has the expected shape
+    const firstField = firstGroup.fields[0];
+    expect(firstField.key).toBeDefined();
+    expect(firstField.type).toBeDefined();
+    expect(firstField.label).toBeDefined();
+
+    // Check that known groups exist
+    const groupIds = body.schema.map((g: any) => g.id);
+    expect(groupIds).toContain('server');
+    expect(groupIds).toContain('features');
+    expect(groupIds).toContain('discord');
+  });
+
+  it('PUT /api/v1/config returns 401 without API key', async () => {
+    const res = await request(port, 'PUT', '/api/v1/config', '{"config":{}}', {
+      'content-type': 'application/json',
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('PUT /api/v1/config returns 400 without config object', async () => {
+    const res = await request(port, 'PUT', '/api/v1/config', '{"notconfig":true}', {
+      'content-type': 'application/json',
+      'x-api-key': TEST_API_KEY,
+    });
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.body).error).toContain('config');
+  });
 });

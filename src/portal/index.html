@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LettaBot Portal</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  /* Portal-specific styles */
+  .request {
+    display: flex;
+    align-items: center;
+    padding: 14px 16px;
+    border-bottom: 1px solid #1a1a1a;
+    gap: 16px;
+  }
+  .request:last-child { border-bottom: none; }
+  .request-code {
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 15px;
+    font-weight: 600;
+    color: #fff;
+    min-width: 90px;
+  }
+  .request-meta { flex: 1; }
+  .request-name { font-size: 13px; color: #ccc; }
+  .request-time { font-size: 12px; color: #555; margin-top: 2px; }
+
+  /* Agent cards */
+  .agent-field {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid #1a1a1a;
+    font-size: 13px;
+  }
+  .agent-field:last-child { border-bottom: none; }
+  .agent-field-label { color: #888; }
+  .agent-field-value {
+    color: #ccc;
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 12px;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .conv-entry {
+    padding: 4px 0 4px 12px;
+    font-size: 12px;
+    color: #888;
+    font-family: "SF Mono", Consolas, monospace;
+  }
+
+  /* Conversation rows */
+  .conv-row {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 10px 12px;
+    background: #141414;
+    border: 1px solid #222;
+    border-radius: 6px;
+    margin-bottom: 4px;
+    cursor: pointer;
+    gap: 12px;
+    font-family: inherit;
+    font-size: inherit;
+    color: inherit;
+    text-align: left;
+  }
+  .conv-row:hover { border-color: #444; }
+  .conv-row:focus-visible { outline: 2px solid #7cb3ff; outline-offset: 2px; }
+  .conv-row[aria-pressed="true"] { border-color: #1a7f37; background: #0d1117; }
+  .conv-id {
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 12px;
+    color: #ccc;
+    min-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .conv-meta { flex: 1; font-size: 12px; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conv-msgs { font-size: 11px; color: #555; white-space: nowrap; }
+
+  /* Set conversation form */
+  .set-conv-form { margin-top: 12px; }
+  .form-row { margin-bottom: 10px; }
+
+  /* Nav link */
+  .nav-link { font-size: 13px; color: #666; margin-bottom: 16px; display: inline-block; }
+  .nav-link:hover { color: #aaa; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>LettaBot <span class="subtitle">Portal</span></h1>
+
+  <nav>
+    <a href="config" class="nav-link">Config Editor</a>
+  </nav>
+
+  <!-- Auth form -->
+  <section class="card" id="auth">
+    <form id="auth-form">
+      <label for="key">API Key</label>
+      <input type="password" id="key" placeholder="Paste your LETTABOT_API_KEY" autocomplete="off">
+      <p style="margin-top: 10px; font-size: 12px; color: #888;">
+        Find your API key at <a href="https://app.letta.com/projects/default-project/api-keys" target="_blank" rel="noopener noreferrer">app.letta.com</a>.
+      </p>
+      <button type="submit" class="btn btn-primary" style="margin-top: 12px;">Connect</button>
+    </form>
+  </section>
+
+  <!-- Main app (hidden until auth) -->
+  <main id="app" class="hidden">
+    <div role="tablist" id="tabs" aria-label="Portal sections"></div>
+    <div id="panel" role="tabpanel" aria-live="polite"></div>
+    <p class="status-bar" id="status" aria-live="polite"></p>
+  </main>
+</div>
+
+<div class="toast" id="toast" role="alert" aria-live="assertive"></div>
+
+<script src="shared.js"></script>
+<script>
+const CHANNELS = ['telegram', 'discord', 'slack'];
+let activeTab = 'telegram';
+let data = {};
+let statusData = {};
+let convListData = {};
+let refreshTimer;
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
+document.getElementById('auth-form').addEventListener('submit', function(e) {
+  e.preventDefault();
+  const key = document.getElementById('key').value.trim();
+  if (!key) return;
+  setApiKey(key);
+  init();
+});
+
+function showAuth() {
+  document.getElementById('auth').classList.remove('hidden');
+  document.getElementById('app').classList.add('hidden');
+  clearInterval(refreshTimer);
+}
+
+function onUnauthorized() {
+  showAuth();
+  showToast('Invalid API key', true);
+}
+
+async function init() {
+  document.getElementById('auth').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  await refresh();
+  refreshTimer = setInterval(refresh, 10000);
+}
+
+// ── Data fetching ─────────────────────────────────────────────────────────────
+
+async function refresh() {
+  for (const ch of CHANNELS) {
+    try {
+      const res = await apiFetch('/api/v1/pairing/' + ch, {}, onUnauthorized);
+      const json = await res.json();
+      data[ch] = json.requests || [];
+    } catch (e) { if (e.message === 'Unauthorized') return; data[ch] = []; }
+  }
+  try {
+    const res = await apiFetch('/api/v1/status', {}, onUnauthorized);
+    const json = await res.json();
+    statusData = json.agents || {};
+  } catch (e) { if (e.message === 'Unauthorized') return; }
+
+  renderTabs();
+  renderContent();
+  if (activeTab === '__status__') loadConversations();
+  document.getElementById('status').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+// ── Tab rendering ─────────────────────────────────────────────────────────────
+
+function renderTabs() {
+  const container = document.getElementById('tabs');
+  container.innerHTML = '';
+
+  const allTabs = [...CHANNELS, '__status__'];
+
+  for (const id of allTabs) {
+    const isActive = id === activeTab;
+    const label = id === '__status__' ? 'Status' : id.charAt(0).toUpperCase() + id.slice(1);
+    const count = id !== '__status__' ? (data[id] || []).length : 0;
+
+    const btn = el('button', {
+      type: 'button',
+      role: 'tab',
+      id: 'tab-' + id,
+      'aria-selected': isActive ? 'true' : 'false',
+      'aria-controls': 'panel',
+      onClick: () => switchTab(id),
+    }, label);
+
+    if (count > 0) {
+      btn.append(el('span', { className: 'badge' }, String(count)));
+    }
+
+    container.append(btn);
+  }
+}
+
+function switchTab(id) {
+  activeTab = id;
+  renderTabs();
+  renderContent();
+  if (id === '__status__') loadConversations();
+}
+
+// ── Content rendering ─────────────────────────────────────────────────────────
+
+function renderContent() {
+  const panel = document.getElementById('panel');
+  panel.setAttribute('aria-labelledby', 'tab-' + activeTab);
+
+  if (activeTab === '__status__') {
+    renderStatus(panel);
+  } else {
+    renderPairingList(panel);
+  }
+}
+
+function renderPairingList(panel) {
+  const items = data[activeTab] || [];
+  panel.innerHTML = '';
+
+  if (items.length === 0) {
+    panel.append(el('p', { className: 'empty' }, 'No pending pairing requests'));
+    return;
+  }
+
+  const list = el('div', { className: 'card' });
+  for (const r of items) {
+    const name = r.meta?.username ? '@' + r.meta.username : r.meta?.firstName || 'User ' + r.id;
+    const ago = timeAgo(r.createdAt);
+
+    const row = el('div', { className: 'request' },
+      el('span', { className: 'request-code' }, r.code),
+      el('div', { className: 'request-meta' },
+        el('div', { className: 'request-name' }, name),
+        el('div', { className: 'request-time' }, ago),
+      ),
+      el('button', {
+        type: 'button',
+        className: 'btn btn-success',
+        onClick: (e) => approve(activeTab, r.code, e.currentTarget),
+      }, 'Approve'),
+    );
+    list.append(row);
+  }
+  panel.append(list);
+}
+
+async function approve(channel, code, btn) {
+  btn.disabled = true;
+  btn.setAttribute('aria-busy', 'true');
+  btn.textContent = 'Approving\u2026';
+  try {
+    const res = await apiFetch('/api/v1/pairing/' + channel + '/approve', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }, onUnauthorized);
+    const json = await res.json();
+    if (json.success) { showToast('Approved'); await refresh(); }
+    else { showToast(json.error || 'Failed', true); btn.disabled = false; btn.textContent = 'Approve'; }
+  } catch (e) {
+    showToast('Error: ' + e.message, true);
+    btn.disabled = false;
+    btn.textContent = 'Approve';
+  }
+  btn.removeAttribute('aria-busy');
+}
+
+// ── Status tab ────────────────────────────────────────────────────────────────
+
+function renderStatus(panel) {
+  panel.innerHTML = '';
+  const agents = Object.entries(statusData);
+  if (agents.length === 0) {
+    panel.append(el('p', { className: 'empty' }, 'No agents configured'));
+    return;
+  }
+
+  const agentNames = agents.map(a => a[0]);
+
+  for (const [name, info] of agents) {
+    const card = el('section', { className: 'card' },
+      el('h3', null, name),
+    );
+
+    const fields = [
+      ['Agent ID', info.agentId || '(none)'],
+      ['Conversation', info.conversationId || '(none)'],
+    ];
+    if (info.baseUrl) fields.push(['Server', info.baseUrl]);
+    if (info.lastUsedAt) fields.push(['Last used', info.lastUsedAt]);
+
+    for (const [label, value] of fields) {
+      card.append(el('div', { className: 'agent-field' },
+        el('span', { className: 'agent-field-label' }, label),
+        el('span', { className: 'agent-field-value' }, value),
+      ));
+    }
+
+    const convs = Object.entries(info.conversations || {});
+    if (convs.length > 0) {
+      card.append(el('div', { className: 'agent-field' },
+        el('span', { className: 'agent-field-label' }, 'Per-key conversations'),
+        el('span', { className: 'agent-field-value' }, String(convs.length)),
+      ));
+      for (const [k, v] of convs) {
+        card.append(el('div', { className: 'conv-entry' }, k + ' = ' + v));
+      }
+    }
+
+    panel.append(card);
+
+    // Conversation list
+    renderConversationList(panel, name, info.conversationId);
+  }
+
+  // Set conversation form
+  renderSetConversationForm(panel, agentNames);
+}
+
+function renderConversationList(panel, agentName, activeConvId) {
+  const conversations = convListData[agentName] || [];
+
+  const section = el('section', null, el('h3', null, 'Conversations'));
+
+  if (conversations === 'loading') {
+    section.append(el('p', { className: 'empty', 'aria-live': 'polite' }, 'Loading\u2026'));
+  } else if (conversations.length === 0) {
+    section.append(el('p', { className: 'empty' }, 'No conversations found'));
+  } else {
+    for (const c of conversations) {
+      const isActive = c.id === activeConvId;
+      const row = el('button', {
+        type: 'button',
+        className: 'conv-row',
+        'aria-pressed': isActive ? 'true' : 'false',
+        onClick: () => pickConversation(c.id, agentName),
+      },
+        el('span', { className: 'conv-id' }, c.id),
+        el('span', { className: 'conv-meta' }, c.summary || (c.updatedAt ? timeAgo(c.updatedAt) : '')),
+        el('span', { className: 'conv-msgs' }, c.messageCount ? c.messageCount + ' msgs' : ''),
+      );
+      section.append(row);
+    }
+  }
+
+  panel.append(section);
+}
+
+function renderSetConversationForm(panel, agentNames) {
+  const form = el('form', { className: 'card set-conv-form' },
+    el('h3', null, 'Set Conversation'),
+  );
+
+  // Agent select
+  const agentSelect = el('select', { id: 'sc-agent' });
+  for (const n of agentNames) {
+    agentSelect.append(el('option', { value: n }, n));
+  }
+  form.append(el('div', { className: 'form-row' },
+    el('label', { for: 'sc-agent' }, 'Agent'),
+    agentSelect,
+  ));
+
+  // Key input
+  form.append(el('div', { className: 'form-row' },
+    el('label', { for: 'sc-key' }, 'Key (leave empty for shared)'),
+    el('input', { type: 'text', id: 'sc-key', placeholder: 'e.g. telegram:12345' }),
+  ));
+
+  // Conversation ID input
+  form.append(el('div', { className: 'form-row' },
+    el('label', { for: 'sc-id' }, 'Conversation ID'),
+    el('input', { type: 'text', id: 'sc-id', placeholder: 'conversation-xxx' }),
+  ));
+
+  const submitBtn = el('button', { type: 'submit', className: 'btn btn-success' }, 'Set Conversation');
+  form.append(submitBtn);
+
+  form.addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const agent = document.getElementById('sc-agent').value;
+    const key = document.getElementById('sc-key').value.trim() || undefined;
+    const conversationId = document.getElementById('sc-id').value.trim();
+    if (!conversationId) { showToast('Conversation ID is required', true); return; }
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Setting\u2026';
+    try {
+      const body = { conversationId, agent };
+      if (key) body.key = key;
+      const res = await apiFetch('/api/v1/conversation', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }, onUnauthorized);
+      const json = await res.json();
+      if (json.success) { showToast('Conversation set'); await refresh(); }
+      else { showToast(json.error || 'Failed', true); }
+    } catch (e) { showToast('Error: ' + e.message, true); }
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Set Conversation';
+  });
+
+  panel.append(form);
+}
+
+async function pickConversation(id, agent) {
+  try {
+    const res = await apiFetch('/api/v1/conversation', {
+      method: 'POST',
+      body: JSON.stringify({ conversationId: id, agent }),
+    }, onUnauthorized);
+    const json = await res.json();
+    if (json.success) { showToast('Switched to ' + id.slice(0, 20) + '\u2026'); await refresh(); }
+    else { showToast(json.error || 'Failed', true); }
+  } catch (e) { showToast('Error: ' + e.message, true); }
+}
+
+async function loadConversations() {
+  for (const name of Object.keys(statusData)) {
+    convListData[name] = 'loading';
+    try {
+      const res = await apiFetch('/api/v1/conversations?agent=' + encodeURIComponent(name), {}, onUnauthorized);
+      const json = await res.json();
+      convListData[name] = json.conversations || [];
+    } catch (e) { convListData[name] = []; }
+  }
+  if (activeTab === '__status__') renderContent();
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+if (getApiKey()) init();
+</script>
+</body>
+</html>

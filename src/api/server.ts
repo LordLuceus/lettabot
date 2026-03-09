@@ -5,6 +5,7 @@
 
 import * as http from 'http';
 import * as fs from 'fs';
+import * as path from 'path';
 import { validateApiKey } from './auth.js';
 import type { SendMessageResponse, ChatRequest, ChatResponse, AsyncChatResponse, PairingListResponse, PairingApproveRequest, PairingApproveResponse } from './types.js';
 import { listPairingRequests, approvePairingCode } from '../pairing/store.js';
@@ -20,6 +21,8 @@ import {
 import type { OpenAIChatRequest } from './openai-compat.js';
 
 import { createLogger } from '../logger.js';
+import { loadConfigStrict, saveConfig, resolveConfigPath } from '../config/io.js';
+import type { LettaBotConfig } from '../config/types.js';
 
 const log = createLogger('API');
 const VALID_CHANNELS: ChannelId[] = ['telegram', 'slack', 'discord', 'whatsapp', 'signal'];
@@ -27,7 +30,33 @@ const MAX_BODY_SIZE = 10 * 1024; // 10KB
 const MAX_TEXT_LENGTH = 10000; // 10k chars
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 const WEBHOOK_CONTEXT = { type: 'webhook' as const, outputMode: 'silent' as const };
-const PORTAL_HTML = fs.readFileSync(new URL('./portal.html', import.meta.url), 'utf-8');
+
+// Portal static file serving
+const PORTAL_DIR = new URL('../portal/', import.meta.url);
+const PORTAL_MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+};
+
+function servePortalFile(res: http.ServerResponse, filePath: string): boolean {
+  const ext = path.extname(filePath);
+  const mime = PORTAL_MIME[ext];
+  if (!mime) return false;
+
+  // Resolve relative to portal dir, prevent traversal
+  const resolved = new URL(filePath, PORTAL_DIR);
+  if (!resolved.pathname.startsWith(new URL('.', PORTAL_DIR).pathname)) return false;
+
+  try {
+    const content = fs.readFileSync(resolved, 'utf-8');
+    res.writeHead(200, { 'Content-Type': mime });
+    res.end(content);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 type ResolvedChatRequest = {
   message: string;
@@ -637,11 +666,77 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
       return;
     }
 
-    // Route: GET /portal - Admin portal for pairing approvals
-    if ((req.url === '/portal' || req.url === '/portal/') && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(PORTAL_HTML);
+    // Route: GET /api/v1/config - Read config (sensitive fields masked)
+    if (req.url === '/api/v1/config' && req.method === 'GET') {
+      if (!validateApiKey(req.headers, options.apiKey)) { sendError(res, 401, 'Unauthorized'); return; }
+      try {
+        const config = loadConfigStrict();
+        const masked = maskSensitiveFields(config);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ config: masked }));
+      } catch (error: any) {
+        log.error('Config read error:', error);
+        sendError(res, 500, error.message || 'Failed to read config');
+      }
       return;
+    }
+
+    // Route: PUT /api/v1/config - Update config
+    if (req.url === '/api/v1/config' && req.method === 'PUT') {
+      if (!validateApiKey(req.headers, options.apiKey)) { sendError(res, 401, 'Unauthorized'); return; }
+      try {
+        const body = await readBody(req, MAX_BODY_SIZE);
+        const parsed = JSON.parse(body);
+        if (!parsed.config || typeof parsed.config !== 'object') {
+          sendError(res, 400, 'Request body must contain a "config" object');
+          return;
+        }
+
+        // Load current config, deep-merge changes, save
+        const current = loadConfigStrict();
+        const merged = deepMergeConfig(current as Record<string, any>, parsed.config) as LettaBotConfig;
+
+        // Save and validate by re-reading (loadConfigStrict throws on invalid config)
+        saveConfig(merged);
+        try {
+          loadConfigStrict();
+        } catch (validationError: any) {
+          // Revert: re-save the original config
+          saveConfig(current);
+          throw new Error('Validation failed after save (reverted): ' + validationError.message);
+        }
+        log.info('Config updated via API');
+
+        // Check if restart-requiring fields changed
+        const restartRequired = needsRestart(current, merged as LettaBotConfig);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, restartRequired }));
+      } catch (error: any) {
+        log.error('Config write error:', error);
+        sendError(res, error.message?.includes('Conflicting') ? 400 : 500, error.message || 'Failed to write config');
+      }
+      return;
+    }
+
+    // Route: GET /api/v1/config/schema - Config field schema
+    if (req.url === '/api/v1/config/schema' && req.method === 'GET') {
+      if (!validateApiKey(req.headers, options.apiKey)) { sendError(res, 401, 'Unauthorized'); return; }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ schema: CONFIG_SCHEMA }));
+      return;
+    }
+
+    // Route: GET /portal/* - Admin portal static files
+    if (req.url?.startsWith('/portal') && req.method === 'GET') {
+      let portalPath = req.url.replace(/^\/portal\/?/, '') || 'index.html';
+      // Strip query strings
+      portalPath = portalPath.split('?')[0];
+      // /portal/config → config.html
+      if (portalPath && !path.extname(portalPath)) portalPath += '.html';
+
+      if (servePortalFile(res, portalPath)) return;
+      // Fall through to 404
     }
 
     // Route: 404 Not Found
@@ -777,3 +872,237 @@ function sendError(res: http.ServerResponse, status: number, message: string, fi
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(response));
 }
+
+// ── Config API helpers ────────────────────────────────────────────────────────
+
+const SENSITIVE_MARKER = '••••••';
+
+/** Paths to mask in config responses (dot-notation). */
+const SENSITIVE_PATHS = [
+  'server.apiKey',
+  'channels.telegram.token',
+  'channels.discord.token',
+  'channels.slack.botToken',
+  'channels.slack.appToken',
+  'channels.signal.phone',
+  'transcription.apiKey',
+  'tts.apiKey',
+];
+
+/** Mask sensitive fields, replacing values with a marker + isSet flag. */
+function maskSensitiveFields(config: LettaBotConfig): Record<string, unknown> {
+  const clone = JSON.parse(JSON.stringify(config));
+
+  for (const dotPath of SENSITIVE_PATHS) {
+    maskPath(clone, dotPath.split('.'));
+  }
+
+  // Also mask tokens in agents[] array
+  if (Array.isArray(clone.agents)) {
+    for (const agent of clone.agents) {
+      if (agent.channels) {
+        for (const chKey of Object.keys(agent.channels)) {
+          const ch = agent.channels[chKey];
+          if (!ch || typeof ch !== 'object') continue;
+          for (const field of ['token', 'botToken', 'appToken', 'apiKey', 'apiHash']) {
+            if (ch[field] && typeof ch[field] === 'string') {
+              ch[field] = SENSITIVE_MARKER;
+              ch[field + '_isSet'] = true;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Mask provider API keys
+  if (Array.isArray(clone.providers)) {
+    for (const p of clone.providers) {
+      if (p.apiKey) { p.apiKey = SENSITIVE_MARKER; p.apiKey_isSet = true; }
+    }
+  }
+
+  return clone;
+}
+
+function maskPath(obj: Record<string, any>, parts: string[]): void {
+  const [head, ...rest] = parts;
+  if (!obj || typeof obj !== 'object' || !(head in obj)) return;
+  if (rest.length === 0) {
+    if (obj[head] && typeof obj[head] === 'string') {
+      obj[head] = SENSITIVE_MARKER;
+      obj[head + '_isSet'] = true;
+    }
+  } else {
+    maskPath(obj[head], rest);
+  }
+}
+
+/** Deep-merge partial config into current config. Null values remove keys. */
+function deepMergeConfig(target: Record<string, any>, source: Record<string, any>): Record<string, any> {
+  const result = { ...target };
+  for (const key of Object.keys(source)) {
+    const val = source[key];
+    // Skip masked sensitive values (don't overwrite real token with marker)
+    if (val === SENSITIVE_MARKER) continue;
+    // Null means delete
+    if (val === null) {
+      delete result[key];
+      continue;
+    }
+    // Deep-merge objects (not arrays)
+    if (val && typeof val === 'object' && !Array.isArray(val) && target[key] && typeof target[key] === 'object' && !Array.isArray(target[key])) {
+      result[key] = deepMergeConfig(target[key], val);
+    } else {
+      result[key] = val;
+    }
+  }
+  return result;
+}
+
+/** Check if structural fields changed (requiring restart). */
+function needsRestart(prev: LettaBotConfig, next: LettaBotConfig): boolean {
+  if (prev.server.mode !== next.server.mode) return true;
+  if (prev.server.baseUrl !== next.server.baseUrl) return true;
+  if (prev.server.apiKey !== next.server.apiKey) return true;
+  if (JSON.stringify(prev.channels) !== JSON.stringify(next.channels)) return true;
+  if (JSON.stringify(prev.agents) !== JSON.stringify(next.agents)) return true;
+  return false;
+}
+
+// ── Config schema (drives the config editor UI) ──────────────────────────────
+
+type FieldType = 'string' | 'number' | 'boolean' | 'enum' | 'secret' | 'string[]';
+interface SchemaField {
+  key: string;
+  type: FieldType;
+  label: string;
+  description?: string;
+  default?: unknown;
+  options?: string[];     // for enum type
+  required?: boolean;
+  restartRequired?: boolean;
+}
+interface SchemaGroup {
+  id: string;
+  label: string;
+  fields: SchemaField[];
+}
+
+const CONFIG_SCHEMA: SchemaGroup[] = [
+  {
+    id: 'server',
+    label: 'Server',
+    fields: [
+      { key: 'server.mode', type: 'enum', label: 'Mode', options: ['api', 'docker'], default: 'api', description: 'api = Letta Cloud, docker = self-hosted', restartRequired: true },
+      { key: 'server.baseUrl', type: 'string', label: 'Base URL', description: 'Letta server URL (docker mode only)', restartRequired: true },
+      { key: 'server.apiKey', type: 'secret', label: 'API Key', description: 'Letta API key', restartRequired: true },
+      { key: 'server.logLevel', type: 'enum', label: 'Log Level', options: ['fatal', 'error', 'warn', 'info', 'debug', 'trace'], default: 'info' },
+      { key: 'server.api.port', type: 'number', label: 'API Port', default: 8080, description: 'Port for the lettabot HTTP API', restartRequired: true },
+      { key: 'server.api.host', type: 'string', label: 'API Host', default: '127.0.0.1', description: 'Bind address (0.0.0.0 for Docker)', restartRequired: true },
+      { key: 'server.api.corsOrigin', type: 'string', label: 'CORS Origin', description: 'Allowed CORS origin' },
+    ],
+  },
+  {
+    id: 'features',
+    label: 'Features',
+    fields: [
+      { key: 'features.cron', type: 'boolean', label: 'Cron Jobs', description: 'Enable scheduled cron tasks' },
+      { key: 'features.heartbeat.enabled', type: 'boolean', label: 'Heartbeat', description: 'Send periodic heartbeat messages' },
+      { key: 'features.heartbeat.intervalMin', type: 'number', label: 'Heartbeat Interval (min)', default: 60, description: 'Minutes between heartbeats' },
+      { key: 'features.heartbeat.skipRecentUserMin', type: 'number', label: 'Skip After User (min)', default: 0, description: 'Skip heartbeat if user messaged within N minutes' },
+      { key: 'features.heartbeat.prompt', type: 'string', label: 'Heartbeat Prompt', description: 'Custom heartbeat message' },
+      { key: 'features.heartbeat.target', type: 'string', label: 'Heartbeat Target', description: 'Delivery target (e.g. telegram:12345)' },
+      { key: 'features.memfs', type: 'boolean', label: 'Memory Filesystem', description: 'Enable git-backed context repository' },
+      { key: 'features.syncSystemPrompt', type: 'boolean', label: 'Sync System Prompt', default: true, description: 'Sync lettabot prompt to agent on startup' },
+      { key: 'features.maxToolCalls', type: 'number', label: 'Max Tool Calls', default: 100, description: 'Abort if agent calls this many tools in one turn' },
+      { key: 'features.inlineImages', type: 'boolean', label: 'Inline Images', default: true, description: 'Send images directly to the LLM' },
+      { key: 'features.display.toolCalls', type: 'boolean', label: 'Show Tool Calls', description: 'Display tool calls in channel output' },
+      { key: 'features.display.reasoning', type: 'boolean', label: 'Show Reasoning', description: 'Display thinking/reasoning in channel output' },
+      { key: 'features.allowedTools', type: 'string[]', label: 'Allowed Tools', description: 'Global tool whitelist' },
+      { key: 'features.disallowedTools', type: 'string[]', label: 'Disallowed Tools', description: 'Global tool blocklist' },
+    ],
+  },
+  {
+    id: 'conversations',
+    label: 'Conversations',
+    fields: [
+      { key: 'conversations.mode', type: 'enum', label: 'Mode', options: ['disabled', 'shared', 'per-channel', 'per-chat'], default: 'shared', description: 'Conversation routing strategy' },
+      { key: 'conversations.heartbeat', type: 'string', label: 'Heartbeat Routing', description: 'dedicated, last-active, or channel name' },
+      { key: 'conversations.perChannel', type: 'string[]', label: 'Per-Channel Keys', description: 'Channels that always have their own conversation' },
+      { key: 'conversations.maxSessions', type: 'number', label: 'Max Sessions', default: 10, description: 'Max concurrent sessions in per-chat mode (LRU eviction)' },
+      { key: 'conversations.reuseSession', type: 'boolean', label: 'Reuse Session', default: true, description: 'Reuse SDK subprocess across messages' },
+    ],
+  },
+  {
+    id: 'transcription',
+    label: 'Transcription',
+    fields: [
+      { key: 'transcription.provider', type: 'enum', label: 'Provider', options: ['openai', 'mistral'], description: 'Voice transcription provider' },
+      { key: 'transcription.apiKey', type: 'secret', label: 'API Key', description: 'Falls back to OPENAI_API_KEY / MISTRAL_API_KEY' },
+      { key: 'transcription.model', type: 'string', label: 'Model', description: 'Default: whisper-1 (OpenAI) or voxtral-mini-latest (Mistral)' },
+    ],
+  },
+  {
+    id: 'tts',
+    label: 'Text-to-Speech',
+    fields: [
+      { key: 'tts.provider', type: 'enum', label: 'Provider', options: ['elevenlabs', 'openai'], default: 'elevenlabs' },
+      { key: 'tts.apiKey', type: 'secret', label: 'API Key' },
+      { key: 'tts.voiceId', type: 'string', label: 'Voice ID', description: 'ElevenLabs voice ID or OpenAI voice name' },
+      { key: 'tts.model', type: 'string', label: 'Model', description: 'Provider-specific model ID' },
+    ],
+  },
+  {
+    id: 'attachments',
+    label: 'Attachments',
+    fields: [
+      { key: 'attachments.maxMB', type: 'number', label: 'Max Size (MB)', description: 'Maximum attachment size' },
+      { key: 'attachments.maxAgeDays', type: 'number', label: 'Max Age (days)', description: 'Auto-delete attachments older than this' },
+    ],
+  },
+  {
+    id: 'security',
+    label: 'Security',
+    fields: [
+      { key: 'security.redaction.secrets', type: 'boolean', label: 'Redact Secrets', default: true, description: 'Redact API keys/tokens in outbound messages' },
+      { key: 'security.redaction.pii', type: 'boolean', label: 'Redact PII', default: false, description: 'Redact emails, phone numbers in outbound messages' },
+    ],
+  },
+  {
+    id: 'discord',
+    label: 'Discord',
+    fields: [
+      { key: 'channels.discord.enabled', type: 'boolean', label: 'Enabled', default: true, restartRequired: true },
+      { key: 'channels.discord.token', type: 'secret', label: 'Bot Token', restartRequired: true },
+      { key: 'channels.discord.dmPolicy', type: 'enum', label: 'DM Policy', options: ['pairing', 'allowlist', 'open'], default: 'pairing' },
+      { key: 'channels.discord.allowedUsers', type: 'string[]', label: 'Allowed Users', description: 'User IDs for allowlist policy' },
+      { key: 'channels.discord.streaming', type: 'boolean', label: 'Streaming', description: 'Stream responses via progressive edits' },
+      { key: 'channels.discord.ignoreBotReactions', type: 'boolean', label: 'Ignore Bot Reactions', default: true, description: 'Ignore emoji reactions from bots' },
+      { key: 'channels.discord.excludeChannels', type: 'string[]', label: 'Exclude Channels', description: 'Channel/guild IDs to completely ignore' },
+      { key: 'channels.discord.memberEvents', type: 'boolean', label: 'Member Events', description: 'Enable member join/leave events' },
+    ],
+  },
+  {
+    id: 'telegram',
+    label: 'Telegram',
+    fields: [
+      { key: 'channels.telegram.enabled', type: 'boolean', label: 'Enabled', default: true, restartRequired: true },
+      { key: 'channels.telegram.token', type: 'secret', label: 'Bot Token', restartRequired: true },
+      { key: 'channels.telegram.dmPolicy', type: 'enum', label: 'DM Policy', options: ['pairing', 'allowlist', 'open'], default: 'pairing' },
+      { key: 'channels.telegram.allowedUsers', type: 'string[]', label: 'Allowed Users' },
+      { key: 'channels.telegram.streaming', type: 'boolean', label: 'Streaming' },
+    ],
+  },
+  {
+    id: 'slack',
+    label: 'Slack',
+    fields: [
+      { key: 'channels.slack.enabled', type: 'boolean', label: 'Enabled', default: true, restartRequired: true },
+      { key: 'channels.slack.botToken', type: 'secret', label: 'Bot Token (xoxb-...)', restartRequired: true },
+      { key: 'channels.slack.appToken', type: 'secret', label: 'App Token (xapp-...)', restartRequired: true },
+      { key: 'channels.slack.dmPolicy', type: 'enum', label: 'DM Policy', options: ['pairing', 'allowlist', 'open'], default: 'pairing' },
+      { key: 'channels.slack.allowedUsers', type: 'string[]', label: 'Allowed Users' },
+    ],
+  },
+];

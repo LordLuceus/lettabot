@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LettaBot Config</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  /* Config editor layout */
+  .layout { display: flex; gap: 24px; }
+  .sidebar { min-width: 160px; position: sticky; top: 24px; align-self: flex-start; }
+  .main { flex: 1; min-width: 0; }
+
+  /* Sidebar nav */
+  .sidebar nav { display: flex; flex-direction: column; gap: 2px; }
+  .sidebar a {
+    display: block;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    color: #888;
+    text-decoration: none;
+  }
+  .sidebar a:hover { color: #ccc; background: #141414; }
+  .sidebar a:focus-visible { outline: 2px solid #7cb3ff; outline-offset: 2px; }
+  .sidebar a[aria-current="true"] { color: #fff; background: #1a1a1a; }
+
+  /* Section */
+  .config-section { margin-bottom: 32px; }
+  .config-section:target { scroll-margin-top: 16px; }
+
+  /* Fieldset */
+  fieldset {
+    border: 1px solid #222;
+    border-radius: 8px;
+    padding: 16px;
+    margin: 0 0 16px 0;
+    background: #141414;
+  }
+  legend {
+    font-size: 14px;
+    font-weight: 600;
+    color: #fff;
+    padding: 0 8px;
+  }
+
+  /* Field row */
+  .field {
+    margin-bottom: 14px;
+  }
+  .field:last-child { margin-bottom: 0; }
+  .field label {
+    display: block;
+    font-size: 13px;
+    color: #ccc;
+    margin-bottom: 4px;
+    font-weight: 500;
+  }
+  .field .description {
+    font-size: 12px;
+    color: #666;
+    margin-top: 2px;
+  }
+  .field .error-text {
+    font-size: 12px;
+    color: #d1242f;
+    margin-top: 2px;
+  }
+
+  /* Checkbox field */
+  .field-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .field-checkbox input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: #1a7f37;
+  }
+  .field-checkbox label {
+    margin-bottom: 0;
+    cursor: pointer;
+  }
+
+  /* Array field */
+  .array-items { display: flex; flex-direction: column; gap: 4px; }
+  .array-row { display: flex; gap: 4px; align-items: center; }
+  .array-row input { flex: 1; }
+  .array-add { margin-top: 4px; }
+
+  /* Banner */
+  .banner {
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    margin-bottom: 16px;
+    background: #2d1b00;
+    border: 1px solid #5a3600;
+    color: #ffb347;
+  }
+
+  /* Top bar */
+  .top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    gap: 16px;
+  }
+  .top-bar h1 { margin-bottom: 0; }
+
+  /* Back link */
+  .back-link { font-size: 13px; color: #666; margin-bottom: 16px; display: inline-block; }
+  .back-link:hover { color: #aaa; }
+
+  /* Loading */
+  .loading { text-align: center; padding: 40px; color: #555; }
+
+  @media (max-width: 600px) {
+    .layout { flex-direction: column; }
+    .sidebar { position: static; }
+  }
+</style>
+</head>
+<body>
+<div class="container" style="max-width: 900px;">
+  <a href="./" class="back-link">&larr; Back to Portal</a>
+
+  <!-- Auth form -->
+  <section class="card" id="auth">
+    <form id="auth-form">
+      <label for="key">API Key</label>
+      <input type="password" id="key" placeholder="Paste your LETTABOT_API_KEY" autocomplete="off">
+      <p style="margin-top: 10px; font-size: 12px; color: #888;">
+        Find your API key at <a href="https://app.letta.com/projects/default-project/api-keys" target="_blank" rel="noopener noreferrer">app.letta.com</a>.
+      </p>
+      <button type="submit" class="btn btn-primary" style="margin-top: 12px;">Connect</button>
+    </form>
+  </section>
+
+  <!-- Main app -->
+  <main id="app" class="hidden">
+    <div class="top-bar">
+      <h1>LettaBot <span class="subtitle">Config</span></h1>
+      <button type="button" class="btn btn-success" id="save-btn" disabled>Save</button>
+    </div>
+    <div id="restart-banner" class="banner hidden" role="status">
+      Changes saved. Restart lettabot for them to take effect.
+    </div>
+    <div class="layout">
+      <aside class="sidebar" id="sidebar"></aside>
+      <div class="main" id="editor">
+        <p class="loading">Loading config&hellip;</p>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast" role="alert" aria-live="assertive"></div>
+
+<script src="shared.js"></script>
+<script>
+let schema = [];
+let config = {};
+let changes = {};
+let currentSection = null;
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
+document.getElementById('auth-form').addEventListener('submit', function(e) {
+  e.preventDefault();
+  const key = document.getElementById('key').value.trim();
+  if (!key) return;
+  setApiKey(key);
+  init();
+});
+
+function onUnauthorized() {
+  document.getElementById('auth').classList.remove('hidden');
+  document.getElementById('app').classList.add('hidden');
+  showToast('Invalid API key', true);
+}
+
+async function init() {
+  document.getElementById('auth').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  await loadData();
+}
+
+// ── Data loading ──────────────────────────────────────────────────────────────
+
+async function loadData() {
+  try {
+    const [schemaRes, configRes] = await Promise.all([
+      apiFetch('/api/v1/config/schema', {}, onUnauthorized),
+      apiFetch('/api/v1/config', {}, onUnauthorized),
+    ]);
+    const schemaJson = await schemaRes.json();
+    const configJson = await configRes.json();
+    schema = schemaJson.schema || [];
+    config = configJson.config || {};
+    changes = {};
+    renderSidebar();
+    renderEditor();
+    updateSaveBtn();
+  } catch (e) {
+    if (e.message === 'Unauthorized') return;
+    document.getElementById('editor').innerHTML = '<p class="empty">Failed to load config: ' + esc(e.message) + '</p>';
+  }
+}
+
+// ── Sidebar ───────────────────────────────────────────────────────────────────
+
+function renderSidebar() {
+  const nav = el('nav', { 'aria-label': 'Config sections' });
+  for (const group of schema) {
+    const link = el('a', {
+      href: '#section-' + group.id,
+      onClick: (e) => {
+        e.preventDefault();
+        setActiveSection(group.id);
+        document.getElementById('section-' + group.id)?.scrollIntoView({ behavior: 'smooth' });
+      },
+    }, group.label);
+    if (currentSection === group.id || (!currentSection && group === schema[0])) {
+      link.setAttribute('aria-current', 'true');
+    }
+    nav.append(link);
+  }
+  const sidebar = document.getElementById('sidebar');
+  sidebar.innerHTML = '';
+  sidebar.append(nav);
+}
+
+function setActiveSection(id) {
+  currentSection = id;
+  const links = document.querySelectorAll('.sidebar a');
+  links.forEach(l => l.setAttribute('aria-current', l.getAttribute('href') === '#section-' + id ? 'true' : 'false'));
+}
+
+// ── Editor ────────────────────────────────────────────────────────────────────
+
+function renderEditor() {
+  const editor = document.getElementById('editor');
+  editor.innerHTML = '';
+
+  for (const group of schema) {
+    const section = el('section', { className: 'config-section', id: 'section-' + group.id });
+    const fieldset = el('fieldset', null, el('legend', null, group.label));
+
+    for (const field of group.fields) {
+      fieldset.append(buildField(field));
+    }
+
+    section.append(fieldset);
+    editor.append(section);
+  }
+}
+
+function getNestedValue(obj, dotPath) {
+  return dotPath.split('.').reduce((o, k) => o && typeof o === 'object' ? o[k] : undefined, obj);
+}
+
+function buildField(field) {
+  const currentVal = getChangedOrCurrent(field.key);
+  const fieldId = 'field-' + field.key.replace(/\./g, '-');
+  const descId = fieldId + '-desc';
+
+  if (field.type === 'boolean') {
+    return buildCheckbox(field, fieldId, currentVal);
+  }
+  if (field.type === 'string[]') {
+    return buildArrayField(field, fieldId, currentVal);
+  }
+
+  const wrapper = el('div', { className: 'field' });
+  const label = el('label', { for: fieldId }, field.label);
+  wrapper.append(label);
+
+  let input;
+  if (field.type === 'enum') {
+    input = el('select', { id: fieldId, 'aria-describedby': field.description ? descId : null });
+    // Add empty option for optional fields
+    if (!field.required) input.append(el('option', { value: '' }, '(not set)'));
+    for (const opt of (field.options || [])) {
+      const option = el('option', { value: opt }, opt);
+      if (String(currentVal) === opt) option.selected = true;
+      input.append(option);
+    }
+    if (!field.required && currentVal !== undefined) input.value = String(currentVal);
+  } else if (field.type === 'secret') {
+    const isSet = getNestedValue(config, field.key + '_isSet');
+    input = el('input', {
+      type: 'password',
+      id: fieldId,
+      placeholder: isSet ? '(set — enter new value to change)' : '(not set)',
+      'aria-describedby': field.description ? descId : null,
+      autocomplete: 'off',
+    });
+  } else if (field.type === 'number') {
+    input = el('input', {
+      type: 'number',
+      id: fieldId,
+      value: currentVal != null ? String(currentVal) : '',
+      placeholder: field.default != null ? 'Default: ' + field.default : '',
+      'aria-describedby': field.description ? descId : null,
+    });
+  } else {
+    input = el('input', {
+      type: 'text',
+      id: fieldId,
+      value: currentVal != null ? String(currentVal) : '',
+      placeholder: field.default != null ? 'Default: ' + field.default : '',
+      'aria-describedby': field.description ? descId : null,
+    });
+  }
+
+  input.addEventListener('input', () => trackChange(field, input));
+  input.addEventListener('change', () => trackChange(field, input));
+  wrapper.append(input);
+
+  if (field.description) {
+    wrapper.append(el('p', { className: 'description', id: descId }, field.description));
+  }
+
+  return wrapper;
+}
+
+function buildCheckbox(field, fieldId, currentVal) {
+  const wrapper = el('div', { className: 'field' });
+  const row = el('div', { className: 'field-checkbox' });
+  const input = el('input', {
+    type: 'checkbox',
+    id: fieldId,
+  });
+  if (currentVal === true || currentVal === 'true') input.checked = true;
+  input.addEventListener('change', () => {
+    setChange(field.key, input.checked);
+    updateSaveBtn();
+  });
+  row.append(input);
+  row.append(el('label', { for: fieldId }, field.label));
+  wrapper.append(row);
+  if (field.description) {
+    wrapper.append(el('p', { className: 'description' }, field.description));
+  }
+  return wrapper;
+}
+
+function buildArrayField(field, fieldId, currentVal) {
+  const wrapper = el('div', { className: 'field' });
+  wrapper.append(el('label', null, field.label));
+
+  const items = Array.isArray(currentVal) ? [...currentVal] : [''];
+  if (items.length === 0) items.push('');
+
+  const container = el('div', { className: 'array-items' });
+
+  function renderItems() {
+    container.innerHTML = '';
+    const currentItems = getChangedOrCurrent(field.key);
+    const arr = Array.isArray(currentItems) ? [...currentItems] : [''];
+    if (arr.length === 0) arr.push('');
+
+    for (let i = 0; i < arr.length; i++) {
+      const row = el('div', { className: 'array-row' });
+      const input = el('input', {
+        type: 'text',
+        value: arr[i] || '',
+        'aria-label': field.label + ' item ' + (i + 1),
+      });
+      input.addEventListener('input', () => {
+        arr[i] = input.value;
+        setChange(field.key, arr.filter(v => v.trim() !== ''));
+        updateSaveBtn();
+      });
+      row.append(input);
+
+      if (arr.length > 1) {
+        const removeBtn = el('button', {
+          type: 'button',
+          className: 'btn btn-ghost btn-sm',
+          'aria-label': 'Remove item ' + (i + 1),
+          onClick: () => {
+            arr.splice(i, 1);
+            setChange(field.key, arr.filter(v => v.trim() !== ''));
+            updateSaveBtn();
+            renderItems();
+          },
+        }, '\u00d7');
+        row.append(removeBtn);
+      }
+
+      container.append(row);
+    }
+
+    const addBtn = el('button', {
+      type: 'button',
+      className: 'btn btn-ghost btn-sm array-add',
+      onClick: () => {
+        const currentArr = getChangedOrCurrent(field.key);
+        const updated = Array.isArray(currentArr) ? [...currentArr, ''] : [''];
+        setChange(field.key, updated);
+        renderItems();
+        // Focus the new input
+        const inputs = container.querySelectorAll('input');
+        if (inputs.length > 0) inputs[inputs.length - 1].focus();
+      },
+    }, '+ Add');
+    container.append(addBtn);
+  }
+
+  renderItems();
+  wrapper.append(container);
+  if (field.description) {
+    wrapper.append(el('p', { className: 'description' }, field.description));
+  }
+  return wrapper;
+}
+
+// ── Change tracking ───────────────────────────────────────────────────────────
+
+function trackChange(field, input) {
+  let value;
+  if (field.type === 'number') {
+    value = input.value === '' ? null : Number(input.value);
+  } else if (field.type === 'secret') {
+    // Only track if user actually typed something
+    if (input.value === '') return;
+    value = input.value;
+  } else {
+    value = input.value === '' ? null : input.value;
+  }
+  setChange(field.key, value);
+  updateSaveBtn();
+}
+
+function setChange(dotPath, value) {
+  // Build nested object from dot path
+  const parts = dotPath.split('.');
+  let obj = changes;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (!obj[parts[i]] || typeof obj[parts[i]] !== 'object') obj[parts[i]] = {};
+    obj = obj[parts[i]];
+  }
+  obj[parts[parts.length - 1]] = value;
+}
+
+function getChangedOrCurrent(dotPath) {
+  // Check changes first (nested lookup)
+  const changedVal = getNestedValue(changes, dotPath);
+  if (changedVal !== undefined) return changedVal;
+  return getNestedValue(config, dotPath);
+}
+
+function updateSaveBtn() {
+  const btn = document.getElementById('save-btn');
+  const hasChanges = Object.keys(changes).length > 0;
+  btn.disabled = !hasChanges;
+}
+
+// ── Save ──────────────────────────────────────────────────────────────────────
+
+document.getElementById('save-btn').addEventListener('click', async function() {
+  const btn = this;
+  btn.disabled = true;
+  btn.textContent = 'Saving\u2026';
+
+  try {
+    const res = await apiFetch('/api/v1/config', {
+      method: 'PUT',
+      body: JSON.stringify({ config: changes }),
+    }, onUnauthorized);
+    const json = await res.json();
+
+    if (json.success) {
+      showToast('Config saved');
+      if (json.restartRequired) {
+        document.getElementById('restart-banner').classList.remove('hidden');
+      }
+      // Reload fresh config
+      await loadData();
+    } else {
+      showToast(json.error || 'Save failed', true);
+    }
+  } catch (e) {
+    showToast('Error: ' + e.message, true);
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Save';
+});
+
+// ── Scroll spy ────────────────────────────────────────────────────────────────
+
+const observer = new IntersectionObserver((entries) => {
+  for (const entry of entries) {
+    if (entry.isIntersecting) {
+      const id = entry.target.id.replace('section-', '');
+      setActiveSection(id);
+    }
+  }
+}, { rootMargin: '-20% 0px -60% 0px' });
+
+function observeSections() {
+  document.querySelectorAll('.config-section').forEach(s => observer.observe(s));
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+if (getApiKey()) init().then(observeSections);
+</script>
+</body>
+</html>
