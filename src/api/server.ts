@@ -947,7 +947,7 @@ function maskPath(obj: Record<string, any>, parts: string[]): void {
 }
 
 /** Deep-merge partial config into current config. Null values remove keys. */
-function deepMergeConfig(target: Record<string, any>, source: Record<string, any>): Record<string, any> {
+export function deepMergeConfig(target: Record<string, any>, source: Record<string, any>): Record<string, any> {
   const result = { ...target };
   for (const key of Object.keys(source)) {
     const val = source[key];
@@ -958,8 +958,20 @@ function deepMergeConfig(target: Record<string, any>, source: Record<string, any
       delete result[key];
       continue;
     }
-    // Deep-merge objects (not arrays)
-    if (val && typeof val === 'object' && !Array.isArray(val) && target[key] && typeof target[key] === 'object' && !Array.isArray(target[key])) {
+    // Deep-merge arrays element-by-element (e.g. agents[])
+    if (Array.isArray(val) && Array.isArray(target[key])) {
+      result[key] = target[key].map((item: any, i: number) => {
+        if (i < val.length && val[i] != null && typeof val[i] === 'object' && typeof item === 'object') {
+          return deepMergeConfig(item, val[i]);
+        }
+        return item;
+      });
+      // Append new elements if source array is longer
+      for (let i = target[key].length; i < val.length; i++) {
+        result[key].push(val[i]);
+      }
+    // Deep-merge plain objects
+    } else if (val && typeof val === 'object' && !Array.isArray(val) && target[key] && typeof target[key] === 'object' && !Array.isArray(target[key])) {
       result[key] = deepMergeConfig(target[key], val);
     } else {
       result[key] = val;

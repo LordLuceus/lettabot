@@ -393,8 +393,14 @@ function renderEditor() {
 
 // ── Field builders ────────────────────────────────────────────────────────────
 
+function effectiveValue(configVal, field) {
+  // If config has an explicit value, use it. Otherwise fall back to schema default.
+  return configVal !== undefined ? configVal : field.default;
+}
+
 function buildField(field, dataPath) {
-  const currentVal = getChangedOrConfig(dataPath);
+  const rawVal = getChangedOrConfig(dataPath);
+  const currentVal = effectiveValue(rawVal, field);
   const fieldId = 'field-' + dataPath.replace(/\./g, '-');
   const descId = fieldId + '-desc';
 
@@ -417,7 +423,7 @@ function buildField(field, dataPath) {
       if (String(currentVal) === opt) option.selected = true;
       input.append(option);
     }
-    if (!field.required && currentVal !== undefined) input.value = String(currentVal);
+    if (currentVal !== undefined && currentVal !== null) input.value = String(currentVal);
   } else if (field.type === 'secret') {
     const isSet = getNestedValue(config, dataPath + '_isSet') || (currentVal && currentVal !== '\u2022\u2022\u2022\u2022\u2022\u2022');
     input = el('input', {
