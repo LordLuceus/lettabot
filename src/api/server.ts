@@ -1022,11 +1022,13 @@ interface SchemaGroup {
 
 // Group channel config fields (shared across Discord, Telegram, Slack, etc.)
 const GROUP_CONFIG_FIELDS: SchemaField[] = [
-  { key: 'mode', type: 'enum', label: 'Mode', options: ['open', 'listen', 'mention-only', 'off'], default: 'open', description: 'How the bot engages in this group' },
+  { key: 'mode', type: 'enum', label: 'Mode', options: ['open', 'listen', 'mention-only', 'disabled'], default: 'open', description: 'How the bot engages in this group' },
   { key: 'allowedUsers', type: 'string[]', label: 'Allowed Users', description: 'Only process messages from these user IDs' },
   { key: 'receiveBotMessages', type: 'boolean', label: 'Receive Bot Messages', default: false, description: 'Process messages from other bots' },
   { key: 'dailyLimit', type: 'number', label: 'Daily Limit', description: 'Max bot triggers per day in this group' },
   { key: 'dailyUserLimit', type: 'number', label: 'Daily User Limit', description: 'Max triggers per user per day' },
+  { key: 'threadMode', type: 'enum', label: 'Thread Mode', options: ['any', 'thread-only'], default: 'any', description: 'Discord: require messages to be in a thread (thread-only) or respond anywhere (any)' },
+  { key: 'autoCreateThreadOnMention', type: 'boolean', label: 'Auto-Create Thread on Mention', default: false, description: 'Discord: auto-create a thread when the bot is @mentioned in a channel' },
 ];
 
 // Per-channel schema definitions (key prefix is relative to the channel object)
@@ -1095,6 +1097,8 @@ const AGENT_INFO_FIELDS: SchemaField[] = [
   { key: 'name', type: 'string', label: 'Name', required: true, restartRequired: true },
   { key: 'id', type: 'string', label: 'Agent ID', description: 'Existing Letta agent ID (skip creation)' },
   { key: 'displayName', type: 'string', label: 'Display Name', description: 'Prefix for outbound messages' },
+  { key: 'model', type: 'string', label: 'Model', description: 'Model for initial agent creation' },
+  { key: 'workingDir', type: 'string', label: 'Working Directory', description: 'Runtime data directory (default: /tmp/lettabot)', restartRequired: true },
 ];
 
 const FEATURES_FIELDS: SchemaField[] = [
