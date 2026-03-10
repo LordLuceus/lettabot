@@ -15,7 +15,7 @@ import { formatApiErrorForUser, formatRawErrorForUser } from './errors.js';
 import { formatToolCallDisplay, formatReasoningDisplay, formatQuestionsForChannel } from './display.js';
 import type { AgentSession } from './interfaces.js';
 import { Store } from './store.js';
-import { getPendingApprovals, rejectApproval, cancelRuns, cancelConversation, recoverOrphanedConversationApproval, getLatestRunError, getAgentModel, updateAgentModel } from '../tools/letta-api.js';
+import { getPendingApprovals, rejectApproval, cancelRuns, cancelConversation, recoverOrphanedConversationApproval, getLatestRunError, getAgentModel, updateAgentModel, isRecoverableConversationId, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
 import { getAgentSkillExecutableDirs, isVoiceMemoConfigured } from '../skills/loader.js';
 import { formatMessageEnvelope, formatGroupBatchEnvelope, type SessionContextOptions } from './formatter.js';
 import type { GroupBatcher } from './group-batcher.js';
@@ -150,10 +150,11 @@ export function resolveConversationKey(
   conversationMode: string | undefined,
   conversationOverrides: Set<string>,
   chatId?: string,
+  forcePerChat?: boolean,
 ): string {
   if (conversationMode === 'disabled') return 'default';
   const normalized = channel.toLowerCase();
-  if (conversationMode === 'per-chat' && chatId) return `${normalized}:${chatId}`;
+  if ((conversationMode === 'per-chat' || forcePerChat) && chatId) return `${normalized}:${chatId}`;
   if (conversationMode === 'per-channel') return normalized;
   if (conversationOverrides.has(normalized)) return normalized;
   return 'shared';
@@ -346,9 +347,44 @@ export class LettaBot implements AgentSession {
         continue;
       }
 
+      if (directive.type === 'send-message') {
+        // Targeted message delivery to a specific channel:chat.
+        try {
+          const targetAdapter = this.channels.get(directive.channel);
+          if (!targetAdapter) {
+            log.warn(`Directive send-message skipped: channel "${directive.channel}" not registered`);
+            continue;
+          }
+          await targetAdapter.sendMessage({ chatId: directive.chat, text: this.prefixResponse(directive.text) });
+          acted = true;
+          log.info(`Directive: sent message to ${directive.channel}:${directive.chat} (${directive.text.length} chars)`);
+        } catch (err) {
+          log.warn('Directive send-message failed:', err instanceof Error ? err.message : err);
+        }
+        continue;
+      }
+
       if (directive.type === 'send-file') {
-        if (typeof adapter.sendFile !== 'function') {
-          log.warn(`Directive send-file skipped: ${adapter.name} does not support sendFile`);
+        // Reject partial targeting: both channel and chat must be set together.
+        // Without this guard, a missing field silently falls back to the triggering chat.
+        if ((directive.channel && !directive.chat) || (!directive.channel && directive.chat)) {
+          log.warn(`Directive send-file skipped: cross-channel targeting requires both channel and chat (got channel=${directive.channel || 'missing'}, chat=${directive.chat || 'missing'})`);
+          continue;
+        }
+
+        // Resolve target adapter: use cross-channel targeting if both channel and chat are set,
+        // otherwise fall back to the adapter/chatId that triggered this response.
+        const targetAdapter = (directive.channel && directive.chat)
+          ? this.channels.get(directive.channel)
+          : adapter;
+        const targetChatId = (directive.channel && directive.chat) ? directive.chat : chatId;
+
+        if (!targetAdapter) {
+          log.warn(`Directive send-file skipped: channel "${directive.channel}" not registered`);
+          continue;
+        }
+        if (typeof targetAdapter.sendFile !== 'function') {
+          log.warn(`Directive send-file skipped: ${targetAdapter.name} does not support sendFile`);
           continue;
         }
 
@@ -384,15 +420,16 @@ export class LettaBot implements AgentSession {
         }
 
         try {
-          await adapter.sendFile({
-            chatId,
+          await targetAdapter.sendFile({
+            chatId: targetChatId,
             filePath: resolvedPath,
             caption: directive.caption,
             kind: directive.kind ?? inferFileKind(resolvedPath),
-            threadId,
+            threadId: (directive.channel && directive.chat) ? undefined : threadId,
           });
           acted = true;
-          log.info(`Directive: sent file ${resolvedPath}`);
+          const target = (directive.channel && directive.chat) ? ` to ${directive.channel}:${directive.chat}` : '';
+          log.info(`Directive: sent file ${resolvedPath}${target}`);
 
           // Optional cleanup: delete file after successful send.
           // Only honored when sendFileCleanup is enabled in config (defense-in-depth).
@@ -446,10 +483,23 @@ export class LettaBot implements AgentSession {
           .map(dir => join(dir, 'lettabot-tts'))
           .find(p => existsSync(p));
 
+        const ttsProvider = (process.env.TTS_PROVIDER || 'elevenlabs').toLowerCase();
+        const ttsVoice = ttsProvider === 'openai'
+          ? (process.env.OPENAI_TTS_VOICE || 'alloy')
+          : (process.env.ELEVENLABS_VOICE_ID || 'onwK4e9ZLuTAKqWW03F9');
+        const ttsModel = ttsProvider === 'openai'
+          ? (process.env.OPENAI_TTS_MODEL || 'tts-1')
+          : (process.env.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2');
+
         if (!ttsPath) {
           log.warn('Directive voice skipped: lettabot-tts not found in skill dirs');
           continue;
         }
+
+        log.info(
+          `Directive voice: generating memo (provider=${ttsProvider}, model=${ttsModel}, voice=${ttsVoice}, textLen=${directive.text.length})`,
+        );
+        log.info(`Directive voice: helper=${ttsPath}`);
 
         try {
           const outputPath = await new Promise<string>((resolve, reject) => {
@@ -459,12 +509,36 @@ export class LettaBot implements AgentSession {
               timeout: 30_000,
             }, (err, stdout, stderr) => {
               if (err) {
-                reject(new Error(stderr?.trim() || err.message));
+                const execErr = new Error(stderr?.trim() || err.message) as Error & {
+                  code?: string | number | null;
+                  signal?: NodeJS.Signals;
+                  stdout?: string;
+                  stderr?: string;
+                };
+                execErr.code = err.code;
+                execErr.signal = err.signal;
+                execErr.stdout = stdout?.trim();
+                execErr.stderr = stderr?.trim();
+                reject(execErr);
               } else {
-                resolve(stdout.trim());
+                const output = stdout.trim();
+                if (!output) {
+                  reject(new Error('lettabot-tts returned an empty output path'));
+                  return;
+                }
+                if (stderr?.trim()) {
+                  log.warn('Directive voice: lettabot-tts stderr:', stderr.trim());
+                }
+                resolve(output.split('\n').at(-1)?.trim() || output);
               }
             });
           });
+
+          const outputStats = await stat(outputPath);
+          if (!outputStats.isFile()) {
+            throw new Error(`Generated TTS output is not a file: ${outputPath}`);
+          }
+          log.info(`Directive voice: generated file ${outputPath} (${outputStats.size} bytes)`);
 
           await adapter.sendFile({
             chatId,
@@ -478,7 +552,23 @@ export class LettaBot implements AgentSession {
           // Clean up generated file
           try { await unlink(outputPath); } catch {}
         } catch (err) {
-          log.warn('Directive voice failed:', err instanceof Error ? err.message : err);
+          const execErr = err as Error & {
+            code?: string | number | null;
+            signal?: NodeJS.Signals;
+            stdout?: string;
+            stderr?: string;
+          };
+          log.warn('Directive voice failed:', {
+            message: execErr?.message || String(err),
+            code: execErr?.code,
+            signal: execErr?.signal,
+            stdout: typeof execErr?.stdout === 'string' ? execErr.stdout.slice(0, 300) : undefined,
+            stderr: typeof execErr?.stderr === 'string' ? execErr.stderr.slice(0, 1200) : undefined,
+            provider: ttsProvider,
+            model: ttsModel,
+            voice: ttsVoice,
+            helper: ttsPath,
+          });
         }
       }
     }
@@ -494,8 +584,8 @@ export class LettaBot implements AgentSession {
    * Returns 'shared' in shared mode (unless channel is in perChannel overrides).
    * Returns channel id in per-channel mode or for override channels.
    */
-  private resolveConversationKey(channel: string, chatId?: string): string {
-    return resolveConversationKey(channel, this.config.conversationMode, this.conversationOverrides, chatId);
+  private resolveConversationKey(channel: string, chatId?: string, forcePerChat?: boolean): string {
+    return resolveConversationKey(channel, this.config.conversationMode, this.conversationOverrides, chatId, forcePerChat);
   }
 
   /**
@@ -536,7 +626,7 @@ export class LettaBot implements AgentSession {
 
   registerChannel(adapter: ChannelAdapter): void {
     adapter.onMessage = (msg) => this.handleMessage(msg, adapter);
-    adapter.onCommand = (cmd, chatId, args) => this.handleCommand(cmd, adapter.id, chatId, args);
+    adapter.onCommand = (cmd, chatId, args, forcePerChat) => this.handleCommand(cmd, adapter.id, chatId, args, forcePerChat);
 
     // Wrap outbound methods when any redaction layer is active.
     // Secrets are enabled by default unless explicitly disabled.
@@ -582,7 +672,7 @@ export class LettaBot implements AgentSession {
       }
     }
 
-    const convKey = this.resolveConversationKey(effective.channel, effective.chatId);
+    const convKey = this.resolveConversationKey(effective.channel, effective.chatId, effective.forcePerChat);
     if (convKey !== 'shared') {
       this.enqueueForKey(convKey, effective, adapter);
     } else {
@@ -597,7 +687,7 @@ export class LettaBot implements AgentSession {
   // Commands
   // =========================================================================
 
-  private async handleCommand(command: string, channelId?: string, chatId?: string, args?: string): Promise<string | null> {
+  private async handleCommand(command: string, channelId?: string, chatId?: string, args?: string, forcePerChat?: boolean): Promise<string | null> {
     log.info(`Received: /${command}${args ? ` ${args}` : ''}`);
     switch (command) {
       case 'status': {
@@ -625,7 +715,7 @@ export class LettaBot implements AgentSession {
         // other channels/chats' conversations are never silently destroyed.
         // resolveConversationKey returns 'shared' for non-override channels,
         // the channel id for per-channel, or channel:chatId for per-chat.
-        const convKey = channelId ? this.resolveConversationKey(channelId, chatId) : 'shared';
+        const convKey = channelId ? this.resolveConversationKey(channelId, chatId, forcePerChat) : 'shared';
 
         // In disabled mode the bot always uses the agent's built-in default
         // conversation -- there's nothing to reset locally.
@@ -656,7 +746,7 @@ export class LettaBot implements AgentSession {
         }
       }
       case 'cancel': {
-        const convKey = channelId ? this.resolveConversationKey(channelId, chatId) : 'shared';
+        const convKey = channelId ? this.resolveConversationKey(channelId, chatId, forcePerChat) : 'shared';
 
         // Check if there's actually an active run for this conversation key
         if (!this.processingKeys.has(convKey) && !this.processing) {
@@ -763,7 +853,7 @@ export class LettaBot implements AgentSession {
       );
       
       if (pendingApprovals.length === 0) {
-        if (this.store.conversationId) {
+        if (isRecoverableConversationId(this.store.conversationId)) {
           const convResult = await recoverOrphanedConversationApproval(
             this.store.agentId!,
             this.store.conversationId
@@ -821,7 +911,7 @@ export class LettaBot implements AgentSession {
     // queuing it for normal processing. This prevents a deadlock where
     // the stream is paused waiting for user input while the processing
     // flag blocks new messages from being handled.
-    const incomingConvKey = this.resolveConversationKey(msg.channel, msg.chatId);
+    const incomingConvKey = this.resolveConversationKey(msg.channel, msg.chatId, msg.forcePerChat);
     const pendingResolver = this.pendingQuestionResolvers.get(incomingConvKey);
     if (pendingResolver) {
       log.info(`Intercepted message as AskUserQuestion answer from ${msg.userId} (key=${incomingConvKey})`);
@@ -841,7 +931,7 @@ export class LettaBot implements AgentSession {
       return;
     }
 
-    const convKey = this.resolveConversationKey(msg.channel, msg.chatId);
+    const convKey = this.resolveConversationKey(msg.channel, msg.chatId, msg.forcePerChat);
     if (convKey !== 'shared') {
       // Per-channel, per-chat, or override mode: messages on different keys can run in parallel.
       this.enqueueForKey(convKey, msg, adapter);
@@ -926,7 +1016,7 @@ export class LettaBot implements AgentSession {
 
         // Wait for the user's next message (intercepted by handleMessage).
         // Key by convKey so each chat resolves independently in per-chat mode.
-        const questionConvKey = this.resolveConversationKey(msg.channel, msg.chatId);
+        const questionConvKey = this.resolveConversationKey(msg.channel, msg.chatId, msg.forcePerChat);
         const answer = await new Promise<string>((resolve) => {
           this.pendingQuestionResolvers.set(questionConvKey, resolve);
         });
@@ -1101,7 +1191,7 @@ export class LettaBot implements AgentSession {
     // Run session
     let session: Session | null = null;
     try {
-      const convKey = this.resolveConversationKey(msg.channel, msg.chatId);
+      const convKey = this.resolveConversationKey(msg.channel, msg.chatId, msg.forcePerChat);
       const seq = ++this.sendSequence;
       const userText = msg.text || '';
       log.info(`processMessage seq=${seq} key=${convKey} retried=${retried} user=${msg.userId} textLen=${userText.length}`);
@@ -1297,35 +1387,47 @@ export class LettaBot implements AgentSession {
               if (runId && (streamMsg.type === 'reasoning' || streamMsg.type === 'tool_call')) {
                 bufferRunScopedDisplayEvent(runId, streamMsg);
                 filteredRunEventCount++;
-                log.debug(`Buffering run-scoped pre-foreground display event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runId=${runId})`);
+                log.trace(`Buffering run-scoped pre-foreground display event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runId=${runId})`);
                 continue;
               }
               filteredRunEventCount++;
-              log.debug(`Deferring run-scoped pre-foreground event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')})`);
+              log.trace(`Deferring run-scoped pre-foreground event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')})`);
               continue;
             }
           } else if (expectedForegroundRunId && eventRunIds.length > 0 && !eventRunIds.includes(expectedForegroundRunId)) {
-            // Strict no-rebind policy: once foreground is selected, never switch.
-            sawCompetingRunEvent = true;
-            filteredRunEventCount++;
-            if (streamMsg.type === 'result') {
-              ignoredNonForegroundResultCount++;
-              log.warn(`Ignoring non-foreground result event (seq=${seq}, key=${convKey}, runIds=${eventRunIds.join(',')}, expected=${expectedForegroundRunId}, source=${expectedForegroundRunSource || 'unknown'})`);
+            // After a tool call the Letta server may assign a new run ID for
+            // the continuation. Rebind on assistant events -- background Task
+            // agents run in separate sessions and don't produce assistant
+            // events in the foreground stream. Other event types (reasoning,
+            // tool_call, result) from different runs are still filtered to
+            // prevent background Task output leaking into user display (#482).
+            if (streamMsg.type === 'assistant') {
+              const newRunId = eventRunIds[0];
+              log.info(`Rebinding foreground run: ${expectedForegroundRunId} -> ${newRunId} (seq=${seq}, key=${convKey}, type=${streamMsg.type})`);
+              expectedForegroundRunId = newRunId;
+              expectedForegroundRunSource = 'assistant';
+              // Flush any buffered display events for the new run.
+              if (bufferedDisplayEvents.length > 0) {
+                await flushBufferedDisplayEventsForRun(newRunId);
+              }
+              // Fall through to normal processing
             } else {
-              log.debug(`Skipping non-foreground stream event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')}, expected=${expectedForegroundRunId})`);
+              sawCompetingRunEvent = true;
+              filteredRunEventCount++;
+              if (streamMsg.type === 'result') {
+                ignoredNonForegroundResultCount++;
+                log.warn(`Ignoring non-foreground result event (seq=${seq}, key=${convKey}, runIds=${eventRunIds.join(',')}, expected=${expectedForegroundRunId})`);
+              } else {
+                log.trace(`Skipping non-foreground stream event (seq=${seq}, key=${convKey}, type=${streamMsg.type}, runIds=${eventRunIds.join(',')}, expected=${expectedForegroundRunId})`);
+              }
+              continue;
             }
-            continue;
           }
 
           receivedAnyData = true;
           msgTypeCounts[streamMsg.type] = (msgTypeCounts[streamMsg.type] || 0) + 1;
           
-          const preview = JSON.stringify(streamMsg).slice(0, 300);
-          if (streamMsg.type === 'reasoning' || streamMsg.type === 'assistant') {
-            log.debug(`type=${streamMsg.type} ${preview}`);
-          } else {
-            log.info(`type=${streamMsg.type} ${preview}`);
-          }
+          log.trace(`type=${streamMsg.type} ${JSON.stringify(streamMsg).slice(0, 300)}`);
           
           // stream_event is a low-level streaming primitive (partial deltas), not a
           // semantic type change. Skip it for type-transition logic so it doesn't
@@ -1542,13 +1644,19 @@ export class LettaBot implements AgentSession {
             // Only retry if we never sent anything to the user. hasResponse tracks
             // the current buffer, but finalizeMessage() clears it on type changes.
             // sentAnyMessage is the authoritative "did we deliver output" flag.
-            const retryConvKey = this.resolveConversationKey(msg.channel, msg.chatId);
+            const retryConvKey = this.resolveConversationKey(msg.channel, msg.chatId, msg.forcePerChat);
             const retryConvIdFromStore = (retryConvKey === 'shared'
               ? this.store.conversationId
               : this.store.getConversationId(retryConvKey)) ?? undefined;
-            const retryConvId = (typeof streamMsg.conversationId === 'string' && streamMsg.conversationId.length > 0)
+            const retryConvIdRaw = (typeof streamMsg.conversationId === 'string' && streamMsg.conversationId.length > 0)
               ? streamMsg.conversationId
               : retryConvIdFromStore;
+            const retryConvId = isRecoverableConversationId(retryConvIdRaw)
+              ? retryConvIdRaw
+              : undefined;
+            if (!retryConvId && retryConvIdRaw) {
+              log.info(`Skipping approval recovery for non-recoverable conversation id: ${retryConvIdRaw}`);
+            }
             const initialRetryDecision = this.buildResultRetryDecision(
               streamMsg,
               resultText,
@@ -1601,6 +1709,19 @@ export class LettaBot implements AgentSession {
                 log.warn(`Approval recovery failed: ${convResult.details}`);
                 log.info('Retrying once with a fresh session after approval conflict...');
                 return this.processMessage(msg, adapter, true);
+              } else {
+                log.info('Approval conflict detected in default/alias conversation -- attempting agent-level recovery...');
+                this.sessionManager.invalidateSession(retryConvKey);
+                session = null;
+                clearInterval(typingInterval);
+                const agentResult = await recoverPendingApprovalsForAgent(this.store.agentId);
+                if (agentResult.recovered) {
+                  log.info(`Agent-level recovery succeeded (${agentResult.details}), retrying message...`);
+                  return this.processMessage(msg, adapter, true);
+                }
+                log.warn(`Agent-level recovery failed: ${agentResult.details}`);
+                log.info('Retrying once with a fresh session after approval conflict...');
+                return this.processMessage(msg, adapter, true);
               }
             }
 
@@ -1634,6 +1755,8 @@ export class LettaBot implements AgentSession {
                   log.info('Retrying once after terminal error (no orphaned approvals detected)...');
                   return this.processMessage(msg, adapter, true);
                 }
+              } else if (!retried && retryDecision.shouldRetryForErrorResult && !retryConvId) {
+                log.warn('Skipping terminal-error retry because no recoverable conversation id is available.');
               }
             }
 
@@ -1765,7 +1888,7 @@ export class LettaBot implements AgentSession {
         log.info(`Suppressed error message to ${msg.chatId} (cooldown: ${Math.round((ERROR_COOLDOWN_MS - (now - lastSent)) / 1000)}s remaining)`);
       }
     } finally {
-      const finalConvKey = this.resolveConversationKey(msg.channel, msg.chatId);
+      const finalConvKey = this.resolveConversationKey(msg.channel, msg.chatId, msg.forcePerChat);
       // When session reuse is disabled, invalidate after every message to
       // eliminate any possibility of stream state bleed between sequential
       // sends. Costs ~5s subprocess init overhead per message.
@@ -1884,6 +2007,14 @@ export class LettaBot implements AgentSession {
                   || ((lastErrorDetail?.message?.toLowerCase().includes('conflict') || false)
                   && (lastErrorDetail?.message?.toLowerCase().includes('waiting for approval') || false));
                 if (isApprovalIssue && !retried) {
+                  if (this.store.agentId) {
+                    const recovery = await recoverPendingApprovalsForAgent(this.store.agentId);
+                    if (recovery.recovered) {
+                      log.info(`sendToAgent: agent-level approval recovery succeeded (${recovery.details})`);
+                    } else {
+                      log.warn(`sendToAgent: agent-level approval recovery did not resolve approvals (${recovery.details})`);
+                    }
+                  }
                   log.info('sendToAgent: approval issue detected -- retrying once with fresh session...');
                   this.sessionManager.invalidateSession(convKey);
                   retried = true;
@@ -1913,11 +2044,44 @@ export class LettaBot implements AgentSession {
             continue;
           }
 
+          // Parse and execute directives from the response.
+          // Targeted directives (send-message, cross-channel send-file) work in any context.
+          // Non-targeted directives work when source adapter context is available.
+          let executedDirectives = false;
+          if (response.trim()) {
+            const parsed = parseDirectives(response);
+            if (parsed.directives.length > 0) {
+              const sourceAdapter = context?.sourceChannel ? this.channels.get(context.sourceChannel) : undefined;
+              const sourceChatId = context?.sourceChatId ?? '';
+
+              // Without a valid source adapter, only explicitly targeted directives can run.
+              // Non-targeted directives (react, voice, untargeted send-file) need a source
+              // chat context and must be filtered out to avoid executing against a wrong channel.
+              const directives = sourceAdapter
+                ? parsed.directives
+                : parsed.directives.filter(d =>
+                    d.type === 'send-message' || (d.type === 'send-file' && d.channel && d.chat)
+                  );
+
+              if (directives.length > 0) {
+                // Targeted directives resolve their own adapter; the fallback here is only
+                // used by non-targeted directives (which are filtered out when no source).
+                const adapter = sourceAdapter ?? this.channels.values().next().value;
+                if (adapter) {
+                  executedDirectives = await this.executeDirectives(
+                    directives, adapter, sourceChatId,
+                  );
+                }
+              }
+              response = parsed.cleanText;
+            }
+          }
+
           if (isSilent && response.trim()) {
-            if (usedMessageCli) {
-              log.info(`Silent mode: agent used lettabot-message CLI, collected ${response.length} chars (not delivered)`);
+            if (usedMessageCli || executedDirectives) {
+              log.info(`Silent mode: agent delivered via ${[usedMessageCli && 'CLI', executedDirectives && 'directives'].filter(Boolean).join(' + ')}, remaining text (${response.length} chars) not delivered`);
             } else {
-              log.warn(`Silent mode: agent produced ${response.length} chars but did NOT use lettabot-message CLI — response discarded. If this keeps happening, the agent's model may not be following silent mode instructions.`);
+              log.warn(`Silent mode: agent produced ${response.length} chars but did NOT use lettabot-message CLI or directives — response discarded. If this keeps happening, the agent's model may not be following silent mode instructions.`);
             }
           }
           return response;

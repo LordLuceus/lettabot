@@ -28,6 +28,15 @@ export interface SendFileDirective {
   caption?: string;
   kind?: 'image' | 'file' | 'audio';
   cleanup?: boolean;
+  channel?: string;
+  chat?: string;
+}
+
+export interface SendMessageDirective {
+  type: 'send-message';
+  text: string;
+  channel: string;
+  chat: string;
 }
 
 export interface VoiceDirective {
@@ -42,7 +51,7 @@ export interface SetStatusDirective {
 }
 
 // Union type — extend with more directive types later
-export type Directive = ReactDirective | SendFileDirective | VoiceDirective | SetStatusDirective;
+export type Directive = ReactDirective | SendFileDirective | SendMessageDirective | VoiceDirective | SetStatusDirective;
 
 export interface ParseResult {
   cleanText: string;
@@ -58,12 +67,20 @@ const ACTIONS_BLOCK_REGEX = /^\s*<actions>([\s\S]*?)<\/actions>/;
 /**
  * Match supported directive tags inside the actions block in source order.
  * - Self-closing: <react ... />, <send-file ... />, <set-status ... />
- * - Content-bearing: <voice>...</voice>, <set-status>...</set-status>
+ * - Content-bearing: <voice>...</voice>, <send-message ...>...</send-message>, <set-status>...</set-status>
  *
  * The attribute capture uses (?:[^>"']|"[^"]*"|'[^']*')* instead of [^>]*
  * to allow `>` inside quoted attribute values (e.g. emoji="<:name:id>").
+ *
+ * Groups:
+ *   1: self-closing tag name (react|send-file|set-status)
+ *   2: self-closing attribute string
+ *   3: <voice> text content
+ *   4: <send-message> attribute string
+ *   5: <send-message> text content
+ *   6: <set-status> text content
  */
-const DIRECTIVE_TOKEN_REGEX = /<(react|send-file|set-status)\b((?:[^>"']|"[^"]*"|'[^']*')*)\/>|<voice>([\s\S]*?)<\/voice>|<set-status>([\s\S]*?)<\/set-status>/g;
+const DIRECTIVE_TOKEN_REGEX = /<(react|send-file|set-status)\b((?:[^>"']|"[^"]*"|'[^']*')*)\/>|<voice>([\s\S]*?)<\/voice>|<send-message\b((?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/send-message>|<set-status>([\s\S]*?)<\/set-status>/g;
 
 /**
  * Parse a single attribute string like: emoji="eyes" message="123"
@@ -91,12 +108,21 @@ function parseChildDirectives(block: string): Directive[] {
   DIRECTIVE_TOKEN_REGEX.lastIndex = 0;
 
   while ((match = DIRECTIVE_TOKEN_REGEX.exec(normalizedBlock)) !== null) {
-    const [, tagName, attrString, voiceText, setStatusText] = match;
+    const [, tagName, attrString, voiceText, sendMsgAttrs, sendMsgText, setStatusText] = match;
 
     if (voiceText !== undefined) {
       const text = voiceText.trim();
       if (text) {
         directives.push({ type: 'voice', text });
+      }
+      continue;
+    }
+
+    if (sendMsgText !== undefined) {
+      const text = sendMsgText.trim();
+      const attrs = parseAttributes(sendMsgAttrs || '');
+      if (text && attrs.channel && attrs.chat) {
+        directives.push({ type: 'send-message', text, channel: attrs.channel, chat: attrs.chat });
       }
       continue;
     }
@@ -137,6 +163,8 @@ function parseChildDirectives(block: string): Directive[] {
         ...(caption ? { caption } : {}),
         ...(kind ? { kind } : {}),
         ...(cleanup ? { cleanup } : {}),
+        ...(attrs.channel ? { channel: attrs.channel } : {}),
+        ...(attrs.chat ? { chat: attrs.chat } : {}),
       });
     }
 
