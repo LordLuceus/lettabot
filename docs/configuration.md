@@ -461,6 +461,8 @@ channels:
 
 Thread messages inherit parent channel config, so child threads under `EZRA_CHANNEL_ID` use the same group rules.
 
+When `threadMode: thread-only` is set, each thread automatically gets its own isolated conversation (message history), regardless of the global `conversations.mode` setting. This prevents messages from different threads from being interleaved in the same conversation. Agent memory (blocks) is still shared across all threads.
+
 ### Finding Group IDs
 
 Each channel uses different identifiers for groups:

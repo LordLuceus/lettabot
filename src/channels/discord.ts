@@ -381,6 +381,7 @@ Ask the bot owner to approve with:
         let isListeningMode = false;
         let effectiveChatId = message.channel.id;
         let effectiveGroupName = groupName;
+        let isThreadOnly = false;
 
         // Group gating: config-based allowlist + mode
         if (isGroup && this.config.groups) {
@@ -414,7 +415,8 @@ Ask the bot owner to approve with:
           }
 
           const threadMode = resolveDiscordThreadMode(this.config.groups, keys);
-          if (threadMode === 'thread-only' && !isThreadMessage) {
+          isThreadOnly = threadMode === 'thread-only';
+          if (isThreadOnly && !isThreadMessage) {
             const shouldCreateThread =
               wasMentioned && resolveDiscordAutoCreateThreadOnMention(this.config.groups, keys);
             if (!shouldCreateThread) {
@@ -444,6 +446,7 @@ Ask the bot owner to approve with:
           serverId: message.guildId || undefined,
           wasMentioned,
           isListeningMode,
+          forcePerChat: isThreadOnly || undefined,
           attachments,
           formatterHints: this.getFormatterHints(),
         });
