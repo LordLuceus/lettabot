@@ -326,6 +326,7 @@ async function main() {
       sendFileDir: agentConfig.features?.sendFileDir,
       sendFileMaxSize: agentConfig.features?.sendFileMaxSize,
       sendFileCleanup: agentConfig.features?.sendFileCleanup,
+      inlineImages: agentConfig.features?.inlineImages ?? yamlConfig.features?.inlineImages,
       memfs: resolvedMemfs,
       syncSystemPrompt: agentConfig.features?.syncSystemPrompt ?? true,
       display: agentConfig.features?.display,

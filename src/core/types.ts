@@ -168,6 +168,9 @@ export interface BotConfig {
   // Safety
   maxToolCalls?: number; // Abort if agent calls this many tools in one turn (default: 100)
 
+  // Images
+  inlineImages?: boolean; // Send images directly to LLM (default: true). False = send file paths only.
+
   // Memory filesystem (context repository)
   memfs?: boolean; // true -> --memfs, false -> --no-memfs, undefined -> leave unchanged
 

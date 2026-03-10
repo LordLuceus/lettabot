@@ -95,8 +95,11 @@ export async function isPathAllowed(filePath: string, allowedDir: string): Promi
 async function buildMultimodalMessage(
   formattedText: string,
   msg: InboundMessage,
+  inlineImages?: boolean,
 ): Promise<SendMessage> {
-  if (process.env.INLINE_IMAGES === 'false') {
+  // Per-agent config takes priority, then env var, then default (true)
+  const enabled = inlineImages ?? (process.env.INLINE_IMAGES !== 'false');
+  if (!enabled) {
     return formattedText;
   }
 
@@ -1090,7 +1093,7 @@ export class LettaBot implements AgentSession {
     const formattedText = msg.isBatch && msg.batchedMessages
       ? formatGroupBatchEnvelope(msg.batchedMessages, {}, msg.isListeningMode)
       : formatMessageEnvelope(msg, {}, sessionContext);
-    const messageToSend = await buildMultimodalMessage(formattedText, msg);
+    const messageToSend = await buildMultimodalMessage(formattedText, msg, this.config.inlineImages);
     lap('format message');
 
     const canUseTool = this.buildCanUseToolCallback(msg, adapter);
