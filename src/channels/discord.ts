@@ -727,6 +727,14 @@ Ask the bot owner to approve with:
     const channelId = message.channel?.id;
     if (!channelId) return;
 
+    // Exclusion list check for reactions
+    if (this.config.excludeChannels?.length) {
+      const guildId = message.guildId;
+      if (this.config.excludeChannels.includes(channelId) || (guildId && this.config.excludeChannels.includes(guildId))) {
+        return;
+      }
+    }
+
     const isGroup = !!message.guildId;
     const channelWithThread = message.channel as { isThread?: () => boolean; parentId?: string | null };
     const isThreadMessage = typeof channelWithThread.isThread === 'function' && channelWithThread.isThread();
