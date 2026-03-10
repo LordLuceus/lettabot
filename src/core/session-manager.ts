@@ -20,6 +20,13 @@ import { createLogger } from '../logger.js';
 
 const log = createLogger('Session');
 
+function toConcreteConversationId(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === 'default') return null;
+  return trimmed;
+}
+
 export class SessionManager {
   private readonly store: Store;
   private readonly config: BotConfig;
@@ -195,6 +202,7 @@ export class SessionManager {
       tools: [createManageTodoTool(this.getTodoAgentKey())],
       // Memory filesystem (context repository): true -> --memfs, false -> --no-memfs, undefined -> leave unchanged
       ...(this.config.memfs !== undefined ? { memfs: this.config.memfs } : {}),
+      ...(this.config.sleeptime ? { sleeptime: this.config.sleeptime } : {}),
       // In bypassPermissions mode, canUseTool is only called for interactive
       // tools (AskUserQuestion, ExitPlanMode). When no callback is provided
       // (background triggers), the SDK auto-denies interactive tools.
@@ -263,11 +271,22 @@ export class SessionManager {
 
     // In disabled mode, always resume the agent's built-in default conversation.
     // Skip store lookup entirely -- no conversation ID is persisted.
-    const convId = key === 'default'
+    const rawConvId = key === 'default'
       ? null
       : key === 'shared'
         ? this.store.conversationId
         : this.store.getConversationId(key);
+    const convId = toConcreteConversationId(rawConvId);
+
+    // Cleanup legacy persisted alias values from older versions.
+    if (rawConvId === 'default') {
+      if (key === 'shared') {
+        this.store.conversationId = null;
+      } else {
+        this.store.clearConversation(key);
+      }
+      log.info(`Cleared legacy default conversation alias (key=${key})`);
+    }
 
     // Propagate per-agent cron store path to CLI subprocesses (lettabot-schedule)
     if (this.config.cronStorePath) {
@@ -307,6 +326,7 @@ export class SessionManager {
         memory: loadMemoryBlocks(this.config.agentName),
         tags: ['origin:lettabot'],
         ...(this.config.memfs !== undefined ? { memfs: this.config.memfs } : {}),
+        ...(this.config.sleeptime ? { sleeptime: this.config.sleeptime } : {}),
       });
       const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
       this.store.setAgent(newAgentId, currentBaseUrl);
@@ -566,9 +586,11 @@ export class SessionManager {
     let session = await this.ensureSessionForKey(convKey);
 
     // Resolve the conversation ID for this key (for error recovery)
-    const convId = convKey === 'shared'
-      ? this.store.conversationId
-      : this.store.getConversationId(convKey);
+    const convId = toConcreteConversationId(
+      convKey === 'shared'
+        ? this.store.conversationId
+        : this.store.getConversationId(convKey)
+    );
 
     // Send message with fallback chain
     try {

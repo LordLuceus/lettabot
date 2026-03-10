@@ -105,6 +105,55 @@ describe('result divergence guard', () => {
     expect(sentTexts).toEqual(['streamed-segment']);
   });
 
+  it('stops after repeated failing lettabot CLI bash calls', async () => {
+    const bot = new LettaBot({
+      workingDir: workDir,
+      allowedTools: [],
+      maxToolCalls: 100,
+    });
+
+    const abort = vi.fn(async () => {});
+    const adapter = {
+      id: 'mock',
+      name: 'Mock',
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      isRunning: vi.fn(() => true),
+      sendMessage: vi.fn(async (_msg: OutboundMessage) => ({ messageId: 'msg-1' })),
+      editMessage: vi.fn(async () => {}),
+      sendTypingIndicator: vi.fn(async () => {}),
+      stopTypingIndicator: vi.fn(async () => {}),
+      supportsEditing: vi.fn(() => false),
+      sendFile: vi.fn(async () => ({ messageId: 'file-1' })),
+    };
+
+    (bot as any).sessionManager.runSession = vi.fn(async () => ({
+      session: { abort },
+      stream: async function* () {
+        yield { type: 'tool_call', toolCallId: 'tc-1', toolName: 'Bash', toolInput: { command: 'lettabot bluesky post --text "hi" --agent Bot' } };
+        yield { type: 'tool_result', toolCallId: 'tc-1', isError: true, content: 'Unknown command: bluesky' };
+        yield { type: 'tool_call', toolCallId: 'tc-2', toolName: 'Bash', toolInput: { command: 'lettabot bluesky post --text "hi" --agent Bot' } };
+        yield { type: 'tool_result', toolCallId: 'tc-2', isError: true, content: 'Unknown command: bluesky' };
+        yield { type: 'tool_call', toolCallId: 'tc-3', toolName: 'Bash', toolInput: { command: 'lettabot bluesky post --text "hi" --agent Bot' } };
+        yield { type: 'tool_result', toolCallId: 'tc-3', isError: true, content: 'Unknown command: bluesky' };
+      },
+    }));
+
+    const msg: InboundMessage = {
+      channel: 'discord',
+      chatId: 'chat-1',
+      userId: 'user-1',
+      text: 'hello',
+      timestamp: new Date(),
+    };
+
+    await (bot as any).processMessage(msg, adapter);
+
+    expect(abort).toHaveBeenCalled();
+    const sentTexts = adapter.sendMessage.mock.calls.map(([payload]) => payload.text as string);
+    expect(sentTexts.some(text => text.includes('repeated CLI command failures'))).toBe(true);
+  });
+
   it('does not deliver reasoning text from error results as the response', async () => {
     const bot = new LettaBot({
       workingDir: workDir,

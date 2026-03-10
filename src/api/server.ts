@@ -923,7 +923,7 @@ function maskSensitiveFields(config: LettaBotConfig): Record<string, unknown> {
         for (const chKey of Object.keys(agent.channels)) {
           const ch = agent.channels[chKey];
           if (!ch || typeof ch !== 'object') continue;
-          for (const field of ['token', 'botToken', 'appToken', 'apiKey', 'apiHash']) {
+          for (const field of ['token', 'botToken', 'appToken', 'appPassword', 'apiKey', 'apiHash']) {
             if (ch[field] && typeof ch[field] === 'string') {
               ch[field] = SENSITIVE_MARKER;
               ch[field + '_isSet'] = true;
@@ -1093,6 +1093,20 @@ const WHATSAPP_FIELDS: SchemaField[] = [
   { key: 'instantGroups', type: 'string[]', label: 'Instant Groups' },
 ];
 
+const BLUESKY_FIELDS: SchemaField[] = [
+  { key: 'enabled', type: 'boolean', label: 'Enabled', default: true, restartRequired: true },
+  { key: 'handle', type: 'string', label: 'Handle', description: 'Bluesky handle (for posting)' },
+  { key: 'appPassword', type: 'secret', label: 'App Password', restartRequired: true },
+  { key: 'serviceUrl', type: 'string', label: 'Service URL', description: 'ATProto service URL (default: https://bsky.social)' },
+  { key: 'appViewUrl', type: 'string', label: 'AppView URL', description: 'For list/notification APIs' },
+  { key: 'jetstreamUrl', type: 'string', label: 'Jetstream URL', description: 'Jetstream WebSocket URL' },
+  { key: 'wantedDids', type: 'string[]', label: 'Wanted DIDs', description: 'DID(s) to follow (e.g. did:plc:...)' },
+  { key: 'wantedCollections', type: 'string[]', label: 'Wanted Collections', description: 'e.g. app.bsky.feed.post' },
+  { key: 'notifications.enabled', type: 'boolean', label: 'Notifications', description: 'Poll notifications API' },
+  { key: 'notifications.intervalSec', type: 'number', label: 'Notification Poll Interval (sec)', default: 60 },
+  { key: 'notifications.reasons', type: 'string[]', label: 'Notification Reasons', description: 'Filter: mention, reply, etc.' },
+];
+
 const AGENT_INFO_FIELDS: SchemaField[] = [
   { key: 'name', type: 'string', label: 'Name', required: true, restartRequired: true },
   { key: 'id', type: 'string', label: 'Agent ID', description: 'Existing Letta agent ID (skip creation)' },
@@ -1114,6 +1128,9 @@ const FEATURES_FIELDS: SchemaField[] = [
   { key: 'features.inlineImages', type: 'boolean', label: 'Inline Images', default: true },
   { key: 'features.display.toolCalls', type: 'boolean', label: 'Show Tool Calls' },
   { key: 'features.display.reasoning', type: 'boolean', label: 'Show Reasoning' },
+  { key: 'features.sleeptime.trigger', type: 'enum', label: 'Sleeptime Trigger', options: ['off', 'step-count', 'compaction-event'], default: 'off', description: 'When to trigger SDK reflection' },
+  { key: 'features.sleeptime.behavior', type: 'enum', label: 'Sleeptime Behavior', options: ['reminder', 'auto-launch'], default: 'reminder', description: 'How to handle sleeptime (reminder prompt or auto-launch)' },
+  { key: 'features.sleeptime.stepCount', type: 'number', label: 'Sleeptime Step Count', description: 'Trigger after N steps (when trigger = step-count)' },
   { key: 'features.allowedTools', type: 'string[]', label: 'Allowed Tools' },
   { key: 'features.disallowedTools', type: 'string[]', label: 'Disallowed Tools' },
 ];
@@ -1177,6 +1194,7 @@ const CONFIG_SCHEMA = {
       slack: { label: 'Slack', fields: SLACK_FIELDS },
       signal: { label: 'Signal', fields: SIGNAL_FIELDS },
       whatsapp: { label: 'WhatsApp', fields: WHATSAPP_FIELDS },
+      bluesky: { label: 'Bluesky', fields: BLUESKY_FIELDS },
     },
     groupConfig: GROUP_CONFIG_FIELDS,
   },

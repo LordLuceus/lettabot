@@ -1,3 +1,4 @@
+import { BlueskyAdapter } from './bluesky.js';
 import { DiscordAdapter } from './discord.js';
 import { SignalAdapter } from './signal.js';
 import { SlackAdapter } from './slack.js';
@@ -182,6 +183,31 @@ export function createChannelsForAgent(
   for (const builder of SHARED_CHANNEL_BUILDERS) {
     if (builder.isEnabled(agentConfig)) {
       adapters.push(builder.build(agentConfig, sharedOptions));
+    }
+  }
+
+  // Bluesky: only start if there's something to subscribe to
+  if (agentConfig.channels.bluesky?.enabled) {
+    const bsky = agentConfig.channels.bluesky;
+    const hasWantedDids = !!bsky.wantedDids?.length;
+    const hasLists = !!(bsky.lists && Object.keys(bsky.lists).length > 0);
+    const hasAuth = !!bsky.handle;
+    const wantsNotifications = !!bsky.notifications?.enabled;
+    if (hasWantedDids || hasLists || hasAuth || wantsNotifications) {
+      adapters.push(new BlueskyAdapter({
+        agentName: agentConfig.name,
+        jetstreamUrl: bsky.jetstreamUrl,
+        wantedDids: bsky.wantedDids,
+        wantedCollections: bsky.wantedCollections,
+        cursor: bsky.cursor,
+        handle: bsky.handle,
+        appPassword: bsky.appPassword,
+        serviceUrl: bsky.serviceUrl,
+        appViewUrl: bsky.appViewUrl,
+        groups: bsky.groups,
+        lists: bsky.lists,
+        notifications: bsky.notifications,
+      }));
     }
   }
 

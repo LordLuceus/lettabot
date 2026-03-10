@@ -7,6 +7,7 @@
     "lettabot": "./dist/cli.js",
     "lettabot-schedule": "./dist/cron/cli.js",
     "lettabot-message": "./dist/cli/message.js",
+    "lettabot-bluesky": "./dist/channels/bluesky/cli.js",
     "lettabot-react": "./dist/cli/react.js",
     "lettabot-history": "./dist/cli/history.js",
     "lettabot-channels": "./dist/cli/channels.js",
@@ -66,6 +67,7 @@
     "patches/"
   ],
   "dependencies": {
+    "@atproto/api": "^0.19.1",
     "@clack/prompts": "^0.11.0",
     "@hapi/boom": "^10.0.1",
     "@letta-ai/letta-client": "^1.7.12",

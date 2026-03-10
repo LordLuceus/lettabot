@@ -1232,6 +1232,11 @@ export class LettaBot implements AgentSession {
         | { kind: 'tool_call'; runId: string; msg: StreamMsg }
       > = [];
       const msgTypeCounts: Record<string, number> = {};
+      const bashCommandByToolCallId = new Map<string, string>();
+      let lastBashCommand = '';
+      let repeatedBashFailureKey: string | null = null;
+      let repeatedBashFailureCount = 0;
+      const maxRepeatedBashFailures = 3;
 
       const parseAndHandleDirectives = async () => {
         if (!response.trim()) return;
@@ -1466,12 +1471,68 @@ export class LettaBot implements AgentSession {
             const tcName = streamMsg.toolName || 'unknown';
             const tcId = streamMsg.toolCallId?.slice(0, 12) || '?';
             log.info(`>>> TOOL CALL: ${tcName} (id: ${tcId})`);
+
+            if (tcName === 'Bash') {
+              const toolInput = (streamMsg.toolInput && typeof streamMsg.toolInput === 'object')
+                ? streamMsg.toolInput as Record<string, unknown>
+                : null;
+              const command = typeof toolInput?.command === 'string' ? toolInput.command : '';
+              if (command) {
+                lastBashCommand = command;
+                if (streamMsg.toolCallId) {
+                  bashCommandByToolCallId.set(streamMsg.toolCallId, command);
+                }
+              }
+            }
+
             sawNonAssistantSinceLastUuid = true;
             // Display tool call (args are fully accumulated by dedupedStream buffer-and-flush)
             await sendToolCallDisplay(streamMsg);
           } else if (streamMsg.type === 'tool_result') {
             log.info(`<<< TOOL RESULT: error=${streamMsg.isError}, len=${(streamMsg as any).content?.length || 0}`);
             sawNonAssistantSinceLastUuid = true;
+
+            const toolCallId = typeof streamMsg.toolCallId === 'string' ? streamMsg.toolCallId : '';
+            const mappedCommand = toolCallId ? bashCommandByToolCallId.get(toolCallId) : undefined;
+            if (toolCallId) {
+              bashCommandByToolCallId.delete(toolCallId);
+            }
+            const bashCommand = (mappedCommand || lastBashCommand || '').trim();
+            const toolResultContent = typeof (streamMsg as any).content === 'string'
+              ? (streamMsg as any).content
+              : typeof (streamMsg as any).result === 'string'
+                ? (streamMsg as any).result
+                : '';
+            const lowerContent = toolResultContent.toLowerCase();
+            const isLettabotCliCall = /^lettabot(?:-[a-z0-9-]+)?\b/i.test(bashCommand);
+            const looksCliCommandError = lowerContent.includes('unknown command')
+              || lowerContent.includes('command not found')
+              || lowerContent.includes('usage: lettabot')
+              || lowerContent.includes('usage: lettabot-bluesky')
+              || lowerContent.includes('error: --agent is required for bluesky commands');
+
+            if (streamMsg.isError && bashCommand && isLettabotCliCall && looksCliCommandError) {
+              const errorKind = lowerContent.includes('unknown command') || lowerContent.includes('command not found')
+                ? 'unknown-command'
+                : 'usage-error';
+              const failureKey = `${bashCommand.toLowerCase()}::${errorKind}`;
+              if (repeatedBashFailureKey === failureKey) {
+                repeatedBashFailureCount += 1;
+              } else {
+                repeatedBashFailureKey = failureKey;
+                repeatedBashFailureCount = 1;
+              }
+
+              if (repeatedBashFailureCount >= maxRepeatedBashFailures) {
+                log.error(`Stopping run after repeated Bash command failures (${repeatedBashFailureCount}) for: ${bashCommand}`);
+                session.abort().catch(() => {});
+                response = `(I stopped after repeated CLI command failures while running: ${bashCommand}. The command path appears mismatched. Please confirm Bluesky CLI commands are available, then resend your request.)`;
+                break;
+              }
+            } else {
+              repeatedBashFailureKey = null;
+              repeatedBashFailureCount = 0;
+            }
           } else if (streamMsg.type === 'assistant' && lastMsgType !== 'assistant') {
             log.info(`Generating response...`);
           } else if (streamMsg.type === 'reasoning') {
