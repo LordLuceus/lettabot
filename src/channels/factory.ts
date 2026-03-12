@@ -55,6 +55,10 @@ const SHARED_CHANNEL_BUILDERS: SharedChannelBuilder[] = [
   {
     isEnabled: (agentConfig) => !!agentConfig.channels.whatsapp?.enabled,
     build: (agentConfig, options) => {
+      const whatsappRaw = agentConfig.channels.whatsapp! as unknown as Record<string, unknown>;
+      if (whatsappRaw.streaming) {
+        log.warn('WhatsApp does not support streaming (message edits not available). Streaming setting will be ignored for WhatsApp.');
+      }
       const selfChatMode = agentConfig.channels.whatsapp!.selfChat ?? true;
       if (!selfChatMode) {
         log.warn('WARNING: selfChatMode is OFF - bot will respond to ALL incoming messages!');
@@ -90,6 +94,7 @@ const SHARED_CHANNEL_BUILDERS: SharedChannelBuilder[] = [
         cliPath: signal.cliPath || process.env.SIGNAL_CLI_PATH || 'signal-cli',
         httpHost: signal.httpHost || process.env.SIGNAL_HTTP_HOST || '127.0.0.1',
         httpPort: signal.httpPort || parseInt(process.env.SIGNAL_HTTP_PORT || '8090', 10),
+        readReceipts: signal.readReceipts ?? (process.env.SIGNAL_READ_RECEIPTS !== 'false'),
         dmPolicy: signal.dmPolicy || 'pairing',
         allowedUsers: nonEmpty(signal.allowedUsers),
         selfChatMode,
