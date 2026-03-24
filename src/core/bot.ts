@@ -212,6 +212,25 @@ export function isResponseDeliverySuppressed(msg: Pick<InboundMessage, 'isListen
 }
 
 /**
+ * Combine multiple pending messages into a single synthetic message.
+ * Text is joined with newlines; metadata comes from the last message.
+ * Used when rapid-fire DM messages accumulate while a turn is processing.
+ */
+export function combinePendingMessages(messages: InboundMessage[]): InboundMessage {
+  if (messages.length === 1) return messages[0];
+  const last = messages[messages.length - 1];
+  const combinedText = messages.map(m => m.text).filter(Boolean).join('\n');
+  const allAttachments = messages.flatMap(m => m.attachments || []);
+  return {
+    ...last,
+    text: combinedText,
+    ...(allAttachments.length > 0 ? { attachments: allAttachments } : {}),
+    isBatch: true,
+    batchedMessages: messages,
+  };
+}
+
+/**
  * Pure function: resolve the conversation key for a channel message.
  * Returns `${channel}:${chatId}` in per-chat mode.
  * Returns the channel id in per-channel mode or when the channel is in overrides.
@@ -1097,7 +1116,16 @@ export class LettaBot implements AgentSession {
 
     const queue = this.keyedQueues.get(key);
     while (queue && queue.length > 0) {
-      const { msg, adapter } = queue.shift()!;
+      // Drain all pending messages. If multiple accumulated while the previous
+      // turn was processing, combine them into a single processMessage call so
+      // the agent sees one turn with all the user's text.
+      const items = queue.splice(0, queue.length);
+      const { msg, adapter } = items.length === 1
+        ? items[0]
+        : { msg: combinePendingMessages(items.map(i => i.msg)), adapter: items[items.length - 1].adapter };
+      if (items.length > 1) {
+        log.info(`Batched ${items.length} queued DM messages for key=${key}`);
+      }
       try {
         await this.processMessage(msg, adapter);
       } catch (error) {
@@ -1115,7 +1143,13 @@ export class LettaBot implements AgentSession {
     this.processing = true;
     
     while (this.messageQueue.length > 0) {
-      const { msg, adapter } = this.messageQueue.shift()!;
+      const items = this.messageQueue.splice(0, this.messageQueue.length);
+      const { msg, adapter } = items.length === 1
+        ? items[0]
+        : { msg: combinePendingMessages(items.map(i => i.msg)), adapter: items[items.length - 1].adapter };
+      if (items.length > 1) {
+        log.info(`Batched ${items.length} queued messages (shared mode)`);
+      }
       try {
         await this.processMessage(msg, adapter);
       } catch (error) {
@@ -1213,7 +1247,7 @@ export class LettaBot implements AgentSession {
       serverUrl: process.env.LETTA_BASE_URL || this.store.baseUrl || 'https://api.letta.com',
     } : undefined;
 
-    const formattedText = msg.isBatch && msg.batchedMessages
+    const formattedText = msg.isBatch && msg.batchedMessages && msg.isGroup
       ? formatGroupBatchEnvelope(msg.batchedMessages, {}, msg.isListeningMode)
       : formatMessageEnvelope(msg, {}, sessionContext);
     const messageToSend = await buildMultimodalMessage(formattedText, msg, this.config.inlineImages);
@@ -1354,6 +1388,14 @@ export class LettaBot implements AgentSession {
         if (!response.trim()) return;
         const { cleanText, directives } = parseDirectives(response);
         response = cleanText;
+
+        // Auto-voice: if enabled and no explicit <voice> directive, inject one
+        if (this.config.autoVoice &&
+            cleanText.trim() &&
+            !directives.some(d => d.type === 'voice')) {
+          directives.push({ type: 'voice', text: cleanText.trim() });
+        }
+
         if (directives.length === 0) return;
 
         if (suppressDelivery) {
@@ -1458,9 +1500,13 @@ export class LettaBot implements AgentSession {
             }
 
             case 'tool_call': {
-              // Finalize any pending assistant text on type transition
+              // Discard any unsent assistant text accumulated before this tool call.
+              // Mid-turn assistant content (model scratch notes) must not leak to the
+              // user. The real response will follow after the tool loop completes.
               if (lastEventType === 'text' && response.trim()) {
-                await finalizeMessage();
+                log.info(`Discarding pre-tool assistant text (${response.trim().length} chars)`);
+                response = '';
+                messageId = null;
               }
               lastEventType = 'tool_call';
               this.sessionManager.syncTodoToolCall(event.raw);
@@ -1625,10 +1671,17 @@ export class LettaBot implements AgentSession {
               // already yielded and possibly finalized (sent), don't override.
               if (event.text.trim() && !event.hadStreamedText && event.success && !event.error) {
                 response = event.text;
-              } else if (!sentAnyMessage && response.trim().length === 0 && event.text.trim() && event.success && !event.error) {
-                // Safety fallback: if nothing was delivered yet and response is empty,
-                // allow result-text-based resend.
-                response = event.text;
+              } else if (!sentAnyMessage && response.trim().length === 0 && event.success && !event.error) {
+                // Safety fallback: if nothing was delivered yet and response is empty.
+                // Prefer the raw result field when the pipeline's text came from
+                // pre-tool assistant content that was discarded (hadStreamedText is
+                // true but response was cleared by the tool_call discard logic).
+                const rawResult = typeof event.raw.result === 'string' ? event.raw.result.trim() : '';
+                if (!event.hadStreamedText && event.text.trim()) {
+                  response = event.text;
+                } else if (rawResult) {
+                  response = rawResult;
+                }
               }
 
               const hasResponse = response.trim().length > 0;

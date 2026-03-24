@@ -75,6 +75,7 @@ interface ServerOptions {
   turnLogFiles?: Record<string, string>; // agentName -> filePath; enables GET /turns viewer
   stores?: Map<string, Store>; // Agent stores for management endpoints
   agentChannels?: Map<string, string[]>; // Channel IDs per agent name
+  agentConversationModes?: Map<string, string>; // agentName -> conversationMode (shared|per-channel|per-chat|disabled)
   sessionInvalidators?: Map<string, (key?: string) => void>; // Invalidate live sessions after store writes
 }
 
@@ -478,7 +479,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     const pairingListMatch = req.url?.match(/^\/api\/v1\/pairing\/([a-z0-9-]+)$/);
     if (pairingListMatch && req.method === 'GET') {
       try {
-        if (!validateApiKey(req.headers, options.apiKey)) {
+        if (getPortalMode(options) !== 'shared' && !validateApiKey(req.headers, options.apiKey)) {
           sendError(res, 401, 'Unauthorized');
           return;
         }
@@ -735,7 +736,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     // Route: GET /api/v1/status - Agent status (conversation IDs, channels)
     if (req.url === '/api/v1/status' && req.method === 'GET') {
       try {
-        if (!validateApiKey(req.headers, options.apiKey)) {
+        if (getPortalMode(options) !== 'shared' && !validateApiKey(req.headers, options.apiKey)) {
           sendError(res, 401, 'Unauthorized');
           return;
         }
@@ -797,7 +798,23 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
           return;
         }
 
-        const key = request.key || 'shared';
+        const mode = options.agentConversationModes?.get(agentName);
+        const isPerKey = mode === 'per-channel' || mode === 'per-chat';
+        const key = request.key || (isPerKey ? null : 'shared');
+        if (!key) {
+          sendError(res, 400, `Agent "${agentName}" uses ${mode} conversation mode — a key is required (e.g. "discord", "heartbeat")`);
+          return;
+        }
+        // Reject 'shared' key in per-key modes (per-channel, per-chat, disabled)
+        if (key === 'shared' && (mode === 'per-channel' || mode === 'per-chat' || mode === 'disabled')) {
+          const expectedFormat = mode === 'per-channel'
+            ? 'channel ID (e.g. "telegram", "discord")'
+            : mode === 'per-chat'
+            ? 'chat-specific key (e.g. "telegram:123456")'
+            : 'explicit key (shared mode is disabled)';
+          sendError(res, 400, `Agent "${agentName}" uses ${mode} conversation mode — key "shared" is not allowed. Expected: ${expectedFormat}`);
+          return;
+        }
         if (key === 'shared') {
           store.conversationId = request.conversationId;
         } else {
@@ -823,7 +840,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
     // Route: GET /api/v1/conversations - List conversations from Letta API
     if (req.url?.startsWith('/api/v1/conversations') && req.method === 'GET') {
       try {
-        if (!validateApiKey(req.headers, options.apiKey)) {
+        if (getPortalMode(options) !== 'shared' && !validateApiKey(req.headers, options.apiKey)) {
           sendError(res, 401, 'Unauthorized');
           return;
         }
@@ -1008,6 +1025,21 @@ function readBody(req: http.IncomingMessage, maxSize: number): Promise<string> {
       reject(error);
     });
   });
+}
+
+/**
+ * Returns the effective portal mode based on agent conversation modes:
+ * - 'disabled' if ALL agents are disabled (portal not available)
+ * - 'shared' if ALL agents are in shared mode (no per-user auth)
+ * - otherwise the first non-shared mode (e.g. 'per-channel', 'per-chat')
+ */
+function getPortalMode(options: ServerOptions): string {
+  const modes = options.agentConversationModes;
+  if (!modes || modes.size === 0) return 'shared';
+  const values = [...modes.values()];
+  if (values.every(m => m === 'disabled')) return 'disabled';
+  if (values.every(m => m === 'shared')) return 'shared';
+  return values.find(m => m !== 'shared') ?? 'shared';
 }
 
 function ensureAuthorized(req: http.IncomingMessage, res: http.ServerResponse, apiKey: string): boolean {
@@ -1341,6 +1373,7 @@ const FEATURES_FIELDS: SchemaField[] = [
   { key: 'features.syncSystemPrompt', type: 'boolean', label: 'Sync System Prompt', default: true },
   { key: 'features.maxToolCalls', type: 'number', label: 'Max Tool Calls', default: 100 },
   { key: 'features.inlineImages', type: 'boolean', label: 'Inline Images', default: true },
+  { key: 'features.autoVoice', type: 'boolean', label: 'Auto Voice', description: 'Automatically generate TTS voice memo for every text response' },
   { key: 'features.display.toolCalls', type: 'boolean', label: 'Show Tool Calls' },
   { key: 'features.display.reasoning', type: 'boolean', label: 'Show Reasoning' },
   { key: 'features.sleeptime.trigger', type: 'enum', label: 'Sleeptime Trigger', options: ['off', 'step-count', 'compaction-event'], default: 'off', description: 'When to trigger SDK reflection' },
