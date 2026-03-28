@@ -46,6 +46,7 @@ function toConcreteConversationId(value: string | null | undefined): string | nu
 }
 
 export class SessionManager {
+  private readonly log;
   private readonly store: Store;
   private readonly config: BotConfig;
 
@@ -87,6 +88,7 @@ export class SessionManager {
   ) {
     this.store = store;
     this.config = config;
+    this.log = createLogger('Session', config.agentName);
     this.processingKeys = processingKeys;
     this.lastResultRunFingerprints = lastResultRunFingerprints;
   }
@@ -167,10 +169,10 @@ export class SessionManager {
     try {
       const summary = syncTodosFromTool(this.getTodoAgentKey(), incoming);
       if (summary.added > 0 || summary.updated > 0) {
-        log.info(`Synced ${summary.totalIncoming} todo(s) from ${streamMsg.toolName} into heartbeat store (added=${summary.added}, updated=${summary.updated})`);
+        this.log.info(`Synced ${summary.totalIncoming} todo(s) from ${streamMsg.toolName} into heartbeat store (added=${summary.added}, updated=${summary.updated})`);
       }
     } catch (err) {
-      log.warn('Failed to sync TodoWrite todos:', err instanceof Error ? err.message : err);
+      this.log.warn('Failed to sync TodoWrite todos:', err instanceof Error ? err.message : err);
     }
   }
 
@@ -303,7 +305,7 @@ export class SessionManager {
       } else {
         this.store.clearConversation(key);
       }
-      log.info(`Cleared legacy default conversation alias (key=${key})`);
+      this.log.info(`Cleared legacy default conversation alias (key=${key})`);
     }
 
     // Propagate per-agent cron store path to CLI subprocesses (lettabot-schedule)
@@ -338,7 +340,7 @@ export class SessionManager {
         : createSession(this.store.agentId, opts);
     } else {
       // Create new agent -- persist immediately so we don't orphan it on later failures
-      log.info('Creating new agent');
+      this.log.info('Creating new agent');
       const newAgentId = await createAgent({
         systemPrompt: SYSTEM_PROMPT,
         memory: loadMemoryBlocks(this.config.agentName),
@@ -348,7 +350,7 @@ export class SessionManager {
       });
       const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
       this.store.setAgent(newAgentId, currentBaseUrl);
-      log.info('Saved new agent ID:', newAgentId);
+      this.log.info('Saved new agent ID:', newAgentId);
 
       if (this.config.agentName) {
         updateAgentName(newAgentId, this.config.agentName).catch(() => {});
@@ -365,15 +367,15 @@ export class SessionManager {
     }
 
     // Initialize eagerly so the subprocess is ready before the first send()
-    log.info(
+    this.log.info(
       `Session startup options (key=${key}): ` +
       `memfs=${formatMemfsStartupOption(this.config.memfs)}, ` +
       `sleeptime=${formatSleeptimeStartupOption(this.config.sleeptime)}`,
     );
-    log.info(`Initializing session subprocess (key=${key})...`);
+    this.log.info(`Initializing session subprocess (key=${key})...`);
     try {
       await this.withSessionTimeout(session.initialize(), `Session initialize (key=${key})`);
-      log.info(`Session subprocess ready (key=${key})`);
+      this.log.info(`Session subprocess ready (key=${key})`);
 
       // Sync system prompt on first session init (runs once per bot lifetime).
       // Fire-and-forget: don't block session readiness on the API call.
@@ -387,7 +389,7 @@ export class SessionManager {
       // If the stored agent ID doesn't exist on the server (deleted externally,
       // ghost agent from failed pairing, etc.), clear the stale ID and retry.
       if (this.store.agentId && !bootstrapRetried && isAgentMissingFromInitError(error)) {
-        log.warn(
+        this.log.warn(
           `Agent ${this.store.agentId} appears missing from server, ` +
           `clearing stale agent ID and recreating...`,
         );
@@ -400,7 +402,7 @@ export class SessionManager {
 
     // reset/invalidate can happen while initialize() is in-flight.
     if ((this.sessionGenerations.get(key) ?? 0) !== generation) {
-      log.info(`Discarding stale initialized session (key=${key})`);
+      this.log.info(`Discarding stale initialized session (key=${key})`);
       session.close();
       return this.ensureSessionForKey(key, bootstrapRetried);
     }
@@ -414,37 +416,37 @@ export class SessionManager {
         );
         if (bootstrap.hasPendingApproval) {
           const convId = bootstrap.conversationId || session.conversationId;
-          log.warn(`Pending approval detected at session startup (key=${key}, conv=${convId}), recovering...`);
+          this.log.warn(`Pending approval detected at session startup (key=${key}, conv=${convId}), recovering...`);
 
           // Try SDK-level recovery first (goes through CLI control protocol)
           const sdkResult = await recoverPendingApprovalsWithSdk(session, 10_000);
           if (sdkResult.recovered) {
-            log.info('Proactive SDK approval recovery succeeded');
+            this.log.info('Proactive SDK approval recovery succeeded');
             return this._createSessionForKey(key, true, generation);
           }
 
           // SDK recovery failed -- fall back to API-level recovery
-          log.warn(`SDK recovery did not resolve (${sdkResult.detail ?? 'unknown'}), trying API-level recovery...`);
+          this.log.warn(`SDK recovery did not resolve (${sdkResult.detail ?? 'unknown'}), trying API-level recovery...`);
           session.close();
           const result = isRecoverableConversationId(convId)
             ? await recoverOrphanedConversationApproval(this.store.agentId, convId, true)
             : await recoverPendingApprovalsForAgent(this.store.agentId);
           if (result.recovered) {
-            log.info(`Proactive API-level recovery succeeded: ${result.details}`);
+            this.log.info(`Proactive API-level recovery succeeded: ${result.details}`);
           } else {
-            log.warn(`Proactive approval recovery did not find resolvable approvals: ${result.details}`);
+            this.log.warn(`Proactive approval recovery did not find resolvable approvals: ${result.details}`);
           }
           return this._createSessionForKey(key, true, generation);
         }
       } catch (err) {
         // bootstrapState failure is non-fatal -- the reactive 409 handler in
         // runSession() will catch stuck approvals.
-        log.warn(`bootstrapState check failed (key=${key}), continuing:`, err instanceof Error ? err.message : err);
+        this.log.warn(`bootstrapState check failed (key=${key}), continuing:`, err instanceof Error ? err.message : err);
       }
     }
 
     if ((this.sessionGenerations.get(key) ?? 0) !== generation) {
-      log.info(`Discarding stale session after bootstrapState (key=${key})`);
+      this.log.info(`Discarding stale session after bootstrapState (key=${key})`);
       session.close();
       return this.ensureSessionForKey(key, bootstrapRetried);
     }
@@ -467,7 +469,7 @@ export class SessionManager {
         }
       }
       if (oldestKey) {
-        log.info(`LRU session eviction: closing session for key="${oldestKey}" (${this.sessions.size} active, max=${maxSessions})`);
+        this.log.info(`LRU session eviction: closing session for key="${oldestKey}" (${this.sessions.size} active, max=${maxSessions})`);
         const evicted = this.sessions.get(oldestKey);
         evicted?.close();
         this.sessions.delete(oldestKey);
@@ -477,7 +479,7 @@ export class SessionManager {
         this.lastResultRunFingerprints.delete(oldestKey);
       } else {
         // All existing sessions are active; allow temporary overflow.
-        log.debug(`LRU session eviction skipped: all ${this.sessions.size} sessions are active/in-flight`);
+        this.log.debug(`LRU session eviction skipped: all ${this.sessions.size} sessions are active/in-flight`);
       }
     }
 
@@ -503,7 +505,7 @@ export class SessionManager {
 
       const session = this.sessions.get(key);
       if (session) {
-        log.info(`Invalidating session (key=${key})`);
+        this.log.info(`Invalidating session (key=${key})`);
         session.close();
         this.sessions.delete(key);
         this.sessionLastUsed.delete(key);
@@ -521,7 +523,7 @@ export class SessionManager {
       }
 
       for (const [k, session] of this.sessions) {
-        log.info(`Invalidating session (key=${k})`);
+        this.log.info(`Invalidating session (key=${k})`);
         session.close();
       }
       this.sessions.clear();
@@ -544,7 +546,7 @@ export class SessionManager {
         await this.ensureSessionForKey('shared');
       }
     } catch (err) {
-      log.warn('Session pre-warm failed:', err instanceof Error ? err.message : err);
+      this.log.warn('Session pre-warm failed:', err instanceof Error ? err.message : err);
     }
   }
 
@@ -558,7 +560,7 @@ export class SessionManager {
     if (session.agentId && session.agentId !== this.store.agentId) {
       const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
       this.store.setAgent(session.agentId, currentBaseUrl, session.conversationId || undefined);
-      log.info('Agent ID updated:', session.agentId);
+      this.log.info('Agent ID updated:', session.agentId);
     } else if (session.conversationId && session.conversationId !== 'default' && convKey !== 'default') {
       // In per-channel mode, persist per-key. In shared mode, use legacy field.
       // Skip saving "default" -- it's an API alias, not a real conversation ID.
@@ -567,11 +569,11 @@ export class SessionManager {
         const existing = this.store.getConversationId(convKey);
         if (session.conversationId !== existing) {
           this.store.setConversationId(convKey, session.conversationId);
-          log.info(`Conversation ID updated (key=${convKey}):`, session.conversationId);
+          this.log.info(`Conversation ID updated (key=${convKey}):`, session.conversationId);
         }
       } else if (session.conversationId !== this.store.conversationId) {
         this.store.conversationId = session.conversationId;
-        log.info('Conversation ID updated:', session.conversationId);
+        this.log.info('Conversation ID updated:', session.conversationId);
       }
     }
   }
@@ -614,29 +616,29 @@ export class SessionManager {
     } catch (error) {
       // 409 CONFLICT from orphaned approval -- use SDK recovery first, fall back to API
       if (!retried && isApprovalConflictError(error) && this.store.agentId) {
-        log.info('CONFLICT detected - attempting SDK approval recovery...');
+        this.log.info('CONFLICT detected - attempting SDK approval recovery...');
         const sdkResult = await recoverPendingApprovalsWithSdk(session, 10_000);
         if (sdkResult.recovered) {
-          log.info('SDK approval recovery succeeded, retrying...');
+          this.log.info('SDK approval recovery succeeded, retrying...');
           return this.runSession(message, { retried: true, canUseTool, convKey });
         }
         // SDK recovery failed or unsupported -- fall back to API-level recovery
-        log.warn(`SDK recovery did not resolve (${sdkResult.detail ?? 'unknown'}), trying API-level recovery...`);
+        this.log.warn(`SDK recovery did not resolve (${sdkResult.detail ?? 'unknown'}), trying API-level recovery...`);
         this.invalidateSession(convKey);
         const result = isRecoverableConversationId(convId)
           ? await recoverOrphanedConversationApproval(this.store.agentId, convId)
           : await recoverPendingApprovalsForAgent(this.store.agentId);
         if (result.recovered) {
-          log.info(`API-level recovery succeeded (${result.details}), retrying...`);
+          this.log.info(`API-level recovery succeeded (${result.details}), retrying...`);
           return this.runSession(message, { retried: true, canUseTool, convKey });
         }
-        log.error(`Approval recovery failed: ${result.details}`);
+        this.log.error(`Approval recovery failed: ${result.details}`);
         throw error;
       }
 
       // Conversation/agent not found - try creating a new conversation.
       if (this.store.agentId && isConversationMissingError(error)) {
-        log.warn(`Conversation not found (key=${convKey}), creating a new conversation...`);
+        this.log.warn(`Conversation not found (key=${convKey}), creating a new conversation...`);
         this.invalidateSession(convKey);
         if (convKey !== 'shared') {
           this.store.clearConversation(convKey);

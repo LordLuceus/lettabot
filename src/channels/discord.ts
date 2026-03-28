@@ -345,6 +345,8 @@ Ask the bot owner to approve with:
           command === 'reset' ||
           command === 'heartbeat' ||
           command === 'cancel' ||
+          command === 'approve' ||
+          command === 'disapprove' ||
           command === 'model' ||
           command === 'setconv';
 

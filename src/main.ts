@@ -233,7 +233,7 @@ function parseHeartbeatSkipRecentPolicy(raw?: string): 'fixed' | 'fraction' | 'o
 
 // Global config (shared across all agents)
 const globalConfig = {
-  workingDir: getWorkingDir(),
+  workingDir: getWorkingDir(yamlConfig.agent?.workingDir),
   allowedTools: ensureRequiredTools(
     yamlConfig.features?.allowedTools ??
     parseCsvList(process.env.ALLOWED_TOOLS || 'Bash,Read,Edit,Write,Glob,Grep,Task,web_search,conversation_search'),
@@ -391,6 +391,7 @@ async function main() {
       syncSystemPrompt: agentConfig.features?.syncSystemPrompt ?? true,
       sleeptime: effectiveSleeptime,
       display: agentConfig.features?.display,
+      channelDisplay: agentConfig.features?.channelDisplay,
       conversationMode: agentConfig.conversations?.mode || 'shared',
       heartbeatConversation: agentConfig.conversations?.heartbeat || 'last-active',
       interruptHeartbeatOnUserMessage:
@@ -423,11 +424,14 @@ async function main() {
       log.info(`Agent ${agentConfig.name}: memfs unchanged (not explicitly configured)`);
     }
 
-    // Apply explicit agent ID from config (before store verification)
+    // Apply explicit agent ID from config or env var (before store verification).
+    // Config/env always wins over cached store -- users set agent.id intentionally.
+    // Priority: agent.id (yaml) > LETTA_AGENT_ID (env) > store cache
     let initialStatus = bot.getStatus();
-    if (agentConfig.id && !initialStatus.agentId) {
-      log.info(`Using configured agent ID: ${agentConfig.id}`);
-      bot.setAgentId(agentConfig.id);
+    const configAgentId = agentConfig.id || process.env.LETTA_AGENT_ID;
+    if (configAgentId && initialStatus.agentId !== configAgentId) {
+      log.info(`Config agent ID (${configAgentId}) overrides stored ID (${initialStatus.agentId ?? 'none'})`);
+      bot.setAgentId(configAgentId);
       initialStatus = bot.getStatus();
     }
     
@@ -518,6 +522,7 @@ async function main() {
       promptFile: heartbeatConfig?.promptFile,
       workingDir: resolvedWorkingDir,
       target: parseHeartbeatTarget(heartbeatConfig?.target) || parseHeartbeatTarget(process.env.HEARTBEAT_TARGET),
+      botName: agentConfig.name,
     });
     if (heartbeatConfig?.enabled) {
       heartbeatService.start();
