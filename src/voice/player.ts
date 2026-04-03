@@ -15,6 +15,7 @@ const log = createLogger('VoicePlayer');
 // Dynamic imports
 let createAudioResource: typeof import('@discordjs/voice').createAudioResource;
 let AudioPlayerStatus: typeof import('@discordjs/voice').AudioPlayerStatus;
+let StreamType: typeof import('@discordjs/voice').StreamType;
 let entersState: typeof import('@discordjs/voice').entersState;
 
 let playerLoaded = false;
@@ -25,6 +26,7 @@ async function loadPlayerDeps(): Promise<boolean> {
     const voice = await import('@discordjs/voice');
     createAudioResource = voice.createAudioResource;
     AudioPlayerStatus = voice.AudioPlayerStatus;
+    StreamType = voice.StreamType;
     entersState = voice.entersState;
     playerLoaded = true;
     return true;
@@ -70,7 +72,12 @@ export async function playAudioFile(
     return false;
   }
 
-  const resource = createAudioResource(createReadStream(filePath));
+  // OGG/Opus is Discord's native voice codec — stream it directly without FFmpeg.
+  // For other formats, fall back to the default (which requires FFmpeg).
+  const isOgg = filePath.endsWith('.ogg') || filePath.endsWith('.opus');
+  const resource = createAudioResource(createReadStream(filePath), {
+    inputType: isOgg ? StreamType.OggOpus : StreamType.Arbitrary,
+  });
   session.player.play(resource);
 
   if (options?.waitForCompletion) {
