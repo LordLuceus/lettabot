@@ -98,6 +98,9 @@ export interface FormatterHints {
 
   /** Whether to skip the standard Response Directives section entirely */
   skipDirectives?: boolean;
+
+  /** Whether the bot is currently connected to a voice channel in this guild */
+  voiceConnected?: boolean;
 }
 
 /**

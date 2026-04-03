@@ -81,9 +81,11 @@ tts_elevenlabs() {
 
   local http_code
   # output_format is a QUERY parameter, not a body field.
-  # Putting it in the body is silently ignored and ElevenLabs returns MP3.
+  # Valid values: mp3_44100_128 (default), opus_48000_64, pcm_16000, etc.
+  # Using mp3 default since Discord voice playback uses FFmpeg anyway.
+  local output_fmt="${ELEVENLABS_OUTPUT_FORMAT:-mp3_44100_128}"
   http_code=$(curl -sS -w "%{http_code}" -o "$OUTPUT" \
-    "https://api.elevenlabs.io/v1/text-to-speech/${voice_id}?output_format=ogg_opus" \
+    "https://api.elevenlabs.io/v1/text-to-speech/${voice_id}?output_format=${output_fmt}" \
     -H "xi-api-key: ${ELEVENLABS_API_KEY}" \
     -H "Content-Type: application/json" \
     -d "$(jq -n \
