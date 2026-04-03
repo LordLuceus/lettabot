@@ -130,6 +130,8 @@ export class DiscordAdapter implements ChannelAdapter {
   private attachmentsMaxBytes?: number;
   private statusWatcher: ReturnType<typeof setInterval> | null = null;
   private lastStatusText: string | null = null;
+  /** Cached reference to voice getSession — populated on first voice module import */
+  private _getSessionFn: ((guildId: string) => unknown) | null = null;
 
   onMessage?: (msg: InboundMessage) => Promise<void>;
   onCommand?: (command: string, chatId?: string, args?: string, forcePerChat?: boolean) => Promise<string | null>;
@@ -562,7 +564,7 @@ Ask the bot owner to approve with:
           threadId: isThreadMessage ? effectiveChatId : undefined,
           forcePerChat: (isThreadOnly || isThreadMessage) || undefined,
           attachments,
-          formatterHints: this.getFormatterHints(),
+          formatterHints: this.getFormatterHints(message.guildId),
         });
       }
     });
@@ -752,11 +754,16 @@ Ask the bot owner to approve with:
     return this.config.dmPolicy || 'pairing';
   }
 
-  getFormatterHints() {
+  getFormatterHints(guildId?: string | null) {
+    let voiceConnected = false;
+    if (guildId && this.config.voice?.enabled && this._getSessionFn) {
+      voiceConnected = !!this._getSessionFn(guildId);
+    }
     return {
       supportsReactions: true,
       supportsFiles: true,
       formatHint: 'Discord markdown: **bold** *italic* `code` [links](url) ```code blocks``` — supports headers',
+      voiceConnected,
     };
   }
 
@@ -789,8 +796,9 @@ Ask the bot owner to approve with:
         return false;
       }
 
-      const { joinChannel } = await import('../voice/index.js');
-      const session = await joinChannel(channelId, guild.id, guild.voiceAdapterCreator);
+      const voiceModule = await import('../voice/index.js');
+      if (!this._getSessionFn) this._getSessionFn = voiceModule.getSession;
+      const session = await voiceModule.joinChannel(channelId, guild.id, guild.voiceAdapterCreator);
       return !!session;
     } catch (err) {
       log.error('Failed to join voice channel:', err instanceof Error ? err.message : err);
@@ -986,7 +994,7 @@ Ask the bot owner to approve with:
         messageId: message.id,
         action,
       },
-      formatterHints: this.getFormatterHints(),
+      formatterHints: this.getFormatterHints(message.guildId),
     }).catch((err) => {
       log.error('Error handling reaction:', err);
     });
@@ -1052,7 +1060,7 @@ Ask the bot owner to approve with:
         userName: displayName,
         serverName: guild.name,
       },
-      formatterHints: this.getFormatterHints(),
+      formatterHints: this.getFormatterHints(guildId),
     }).catch((err) => {
       log.error(`Error handling member ${eventType}:`, err);
     });

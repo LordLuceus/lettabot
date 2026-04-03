@@ -368,9 +368,10 @@ function buildResponseDirectives(msg: InboundMessage): string[] {
 
   // voice channel (Discord only)
   if (msg.channel === 'discord') {
+    const inVoice = msg.formatterHints?.voiceConnected ?? false;
+    lines.push(`- **Voice status**: ${inVoice ? '🔊 Connected to voice channel — `<voice>` directives will play TTS audio there' : '🔇 Not in a voice channel'}`);
     lines.push(`- \`<actions><join-voice channel="VOICE_CHANNEL_ID" /></actions>\` — join a voice channel (use \`lettabot-channels list\` to find voice channel IDs)`);
     lines.push(`- \`<actions><leave-voice /></actions>\` — leave the current voice channel`);
-    lines.push(`- When in a voice channel, \`<voice>\` directives play TTS audio there`);
   }
 
   return lines;
