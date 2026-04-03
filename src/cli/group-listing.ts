@@ -27,14 +27,26 @@ interface SlackChannel {
   is_member: boolean;
 }
 
-// Discord channel types that are text-based
-const DISCORD_TEXT_CHANNEL_TYPES = new Set([
+// Discord channel types to list (text-based + voice)
+const DISCORD_LISTABLE_CHANNEL_TYPES = new Set([
   0,  // GUILD_TEXT
   2,  // GUILD_VOICE
   5,  // GUILD_ANNOUNCEMENT
   13, // GUILD_STAGE_VOICE
   15, // GUILD_FORUM
 ]);
+
+/** Human-readable label for Discord channel types */
+function discordChannelTypeLabel(type: number): string {
+  switch (type) {
+    case 0: return 'text';
+    case 2: return 'voice';
+    case 5: return 'announcement';
+    case 13: return 'stage';
+    case 15: return 'forum';
+    default: return 'unknown';
+  }
+}
 
 // ── Platform Listing ─────────────────────────────────────────────────────────
 
@@ -69,18 +81,20 @@ async function listDiscord(token?: string): Promise<void> {
     }
 
     const channels = (await channelsRes.json()) as DiscordChannel[];
-    const textChannels = channels
-      .filter((c) => DISCORD_TEXT_CHANNEL_TYPES.has(c.type))
+    const listableChannels = channels
+      .filter((c) => DISCORD_LISTABLE_CHANNEL_TYPES.has(c.type))
       .sort((a, b) => a.name.localeCompare(b.name));
 
     console.log(`  Server: ${guild.name} (id: ${guild.id})`);
-    if (textChannels.length === 0) {
-      console.log('    (no text channels)');
+    if (listableChannels.length === 0) {
+      console.log('    (no channels)');
     } else {
-      const maxNameLen = Math.max(...textChannels.map((c) => c.name.length));
-      for (const ch of textChannels) {
+      const maxNameLen = Math.max(...listableChannels.map((c) => c.name.length));
+      for (const ch of listableChannels) {
         const padded = ch.name.padEnd(maxNameLen);
-        console.log(`    #${padded}  (id: ${ch.id})`);
+        const typeLabel = discordChannelTypeLabel(ch.type);
+        const prefix = ch.type === 2 || ch.type === 13 ? '🔊' : '#';
+        console.log(`    ${prefix}${padded}  (id: ${ch.id}, type: ${typeLabel})`);
       }
     }
   }

@@ -97,7 +97,10 @@
   "optionalDependencies": {
     "@slack/bolt": "^4.6.0",
     "@whiskeysockets/baileys": "6.7.21",
+    "@discordjs/voice": "^0.19.0",
+    "@snazzah/davey": "^0.1.9",
     "discord.js": "^14.25.1",
+    "sodium-native": "^4.3.1",
     "prebuilt-tdlib": "^0.1008060.0",
     "slackify-markdown": "^5.0.0",
     "tdl": "^8.0.2"

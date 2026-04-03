@@ -1286,6 +1286,11 @@ const DISCORD_FIELDS: SchemaField[] = [
   { key: 'ignoreBotReactions', type: 'boolean', label: 'Ignore Bot Reactions', default: true, description: 'Ignore emoji reactions from bots' },
   { key: 'memberEvents', type: 'boolean', label: 'Member Events', description: 'Enable member join/leave events' },
   { key: 'welcomeChannel', type: 'string', label: 'Welcome Channel', description: 'Channel ID for join/leave events' },
+  { key: 'voice.enabled', type: 'boolean', label: 'Voice Enabled', description: 'Enable voice channel support (join + TTS playback)' },
+  { key: 'voice.autoJoin', type: 'string[]', label: 'Voice Auto-Join', description: 'Voice channel IDs to auto-join on startup' },
+  { key: 'voice.tts.provider', type: 'enum', label: 'Voice TTS Provider', options: ['elevenlabs', 'openai'], description: 'TTS provider for voice channel playback (falls back to global)' },
+  { key: 'voice.tts.voiceId', type: 'string', label: 'Voice TTS Voice ID', description: 'Voice ID for voice channel TTS' },
+  { key: 'voice.tts.model', type: 'string', label: 'Voice TTS Model', description: 'Model for voice channel TTS' },
 ];
 
 const TELEGRAM_FIELDS: SchemaField[] = [

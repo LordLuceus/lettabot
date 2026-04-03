@@ -404,6 +404,16 @@ export interface SignalConfig {
   excludeChannels?: string[];     // Group IDs to completely exclude (bot ignores all messages)
 }
 
+export interface DiscordVoiceConfig {
+  enabled?: boolean;           // Enable voice channel support (default: false)
+  autoJoin?: string[];         // Voice channel IDs to auto-join on startup
+  tts?: {
+    provider?: 'elevenlabs' | 'openai';  // Falls back to global tts config
+    voiceId?: string;
+    model?: string;
+  };
+}
+
 export interface DiscordConfig {
   enabled: boolean;
   token?: string;
@@ -419,6 +429,7 @@ export interface DiscordConfig {
   welcomeChannel?: string;        // Channel ID for member join/leave events (fallback: guild system channel)
   memberEvents?: boolean;         // Enable member join/leave events (requires GuildMembers privileged intent)
   ignoreBotReactions?: boolean;   // Ignore all bot reactions (default: true). Set false for multi-bot setups.
+  voice?: DiscordVoiceConfig;     // Voice channel support (join, TTS playback)
 }
 
 export interface BlueskyConfig {
