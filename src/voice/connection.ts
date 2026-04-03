@@ -96,6 +96,11 @@ export async function joinChannel(
     });
 
     const player = createAudioPlayer();
+    // Default error handler prevents unhandled 'error' events from crashing the process.
+    // Per-playback error handling in player.ts provides more context.
+    player.on('error', (err) => {
+      log.warn(`AudioPlayer error in guild ${guildId}: ${err.message}`);
+    });
     connection.subscribe(player);
 
     // Wait for the connection to be ready (up to 30s)

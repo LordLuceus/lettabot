@@ -80,8 +80,10 @@ tts_elevenlabs() {
   local model_id="${ELEVENLABS_MODEL_ID:-eleven_multilingual_v2}"
 
   local http_code
+  # output_format is a QUERY parameter, not a body field.
+  # Putting it in the body is silently ignored and ElevenLabs returns MP3.
   http_code=$(curl -sS -w "%{http_code}" -o "$OUTPUT" \
-    "https://api.elevenlabs.io/v1/text-to-speech/${voice_id}" \
+    "https://api.elevenlabs.io/v1/text-to-speech/${voice_id}?output_format=ogg_opus" \
     -H "xi-api-key: ${ELEVENLABS_API_KEY}" \
     -H "Content-Type: application/json" \
     -d "$(jq -n \
@@ -89,8 +91,7 @@ tts_elevenlabs() {
       --arg model "$model_id" \
       '{
         text: $text,
-        model_id: $model,
-        output_format: "ogg_opus"
+        model_id: $model
       }'
     )")
 
