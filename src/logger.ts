@@ -39,7 +39,7 @@ function resolveTransport(): pino.TransportSingleOptions | undefined {
       target: 'pino-pretty',
       options: {
         colorize: true,
-        translateTime: 'HH:mm:ss',
+        translateTime: 'HH:MM:ss',
         ignore: 'pid,hostname,service,module',
         messageFormat: '[{module}] {msg}',
         singleLine: true,
