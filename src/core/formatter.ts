@@ -366,6 +366,13 @@ function buildResponseDirectives(msg: InboundMessage): string[] {
     lines.push(`- \`<actions><set-status clear="true" /></actions>\` — clear custom status`);
   }
 
+  // voice channel (Discord only)
+  if (msg.channel === 'discord') {
+    lines.push(`- \`<actions><join-voice channel="VOICE_CHANNEL_ID" /></actions>\` — join a voice channel (use \`lettabot-channels list\` to find voice channel IDs)`);
+    lines.push(`- \`<actions><leave-voice /></actions>\` — leave the current voice channel`);
+    lines.push(`- When in a voice channel, \`<voice>\` directives play TTS audio there`);
+  }
+
   return lines;
 }
 

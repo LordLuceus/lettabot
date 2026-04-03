@@ -50,8 +50,18 @@ export interface SetStatusDirective {
   clear?: boolean;  // If true, remove the current status
 }
 
+export interface JoinVoiceDirective {
+  type: 'join-voice';
+  channel: string;  // Voice channel ID to join
+}
+
+export interface LeaveVoiceDirective {
+  type: 'leave-voice';
+  channel?: string; // Voice channel/guild ID (optional, leaves all if omitted)
+}
+
 // Union type — extend with more directive types later
-export type Directive = ReactDirective | SendFileDirective | SendMessageDirective | VoiceDirective | SetStatusDirective;
+export type Directive = ReactDirective | SendFileDirective | SendMessageDirective | VoiceDirective | SetStatusDirective | JoinVoiceDirective | LeaveVoiceDirective;
 
 export interface ParseResult {
   cleanText: string;
@@ -77,14 +87,14 @@ function createActionsBlockRegex(flags = 'g'): RegExp {
  * to allow `>` inside quoted attribute values (e.g. emoji="<:name:id>").
  *
  * Groups:
- *   1: self-closing tag name (react|send-file|set-status)
+ *   1: self-closing tag name (react|send-file|set-status|join-voice|leave-voice)
  *   2: self-closing attribute string
  *   3: <voice> text content
  *   4: <send-message> attribute string
  *   5: <send-message> text content
  *   6: <set-status> text content
  */
-const DIRECTIVE_TOKEN_REGEX = /<(react|send-file|set-status)\b((?:[^>"']|"[^"]*"|'[^']*')*)\/>|<voice>([\s\S]*?)<\/voice>|<send-message\b((?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/send-message>|<set-status>([\s\S]*?)<\/set-status>/g;
+const DIRECTIVE_TOKEN_REGEX = /<(react|send-file|set-status|join-voice|leave-voice)\b((?:[^>"']|"[^"]*"|'[^']*')*)\/>|<voice>([\s\S]*?)<\/voice>|<send-message\b((?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/send-message>|<set-status>([\s\S]*?)<\/set-status>/g;
 
 /**
  * Parse a single attribute string like: emoji="eyes" message="123"
@@ -180,6 +190,21 @@ function parseChildDirectives(block: string): Directive[] {
       } else if (attrs.text) {
         directives.push({ type: 'set-status', text: attrs.text });
       }
+    }
+
+    if (tagName === 'join-voice') {
+      const attrs = parseAttributes(attrString || '');
+      if (attrs.channel) {
+        directives.push({ type: 'join-voice', channel: attrs.channel });
+      }
+    }
+
+    if (tagName === 'leave-voice') {
+      const attrs = parseAttributes(attrString || '');
+      directives.push({
+        type: 'leave-voice',
+        ...(attrs.channel ? { channel: attrs.channel } : {}),
+      });
     }
   }
 

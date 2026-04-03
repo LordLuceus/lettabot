@@ -643,6 +643,40 @@ export class LettaBot implements AgentSession {
         continue;
       }
 
+      if (directive.type === 'join-voice') {
+        if (typeof adapter.joinVoiceChannel !== 'function') {
+          this.log.warn(`Directive join-voice skipped: ${adapter.name} does not support voice channels`);
+          continue;
+        }
+        try {
+          const success = await adapter.joinVoiceChannel(directive.channel);
+          if (success) {
+            acted = true;
+            this.log.info(`Directive: joined voice channel ${directive.channel}`);
+          } else {
+            this.log.warn(`Directive join-voice failed for channel ${directive.channel}`);
+          }
+        } catch (err) {
+          this.log.warn('Directive join-voice failed:', err instanceof Error ? err.message : err);
+        }
+        continue;
+      }
+
+      if (directive.type === 'leave-voice') {
+        if (typeof adapter.leaveVoiceChannel !== 'function') {
+          this.log.warn(`Directive leave-voice skipped: ${adapter.name} does not support voice channels`);
+          continue;
+        }
+        try {
+          await adapter.leaveVoiceChannel(directive.channel);
+          acted = true;
+          this.log.info(`Directive: left voice channel${directive.channel ? ` ${directive.channel}` : ' (all)'}`);
+        } catch (err) {
+          this.log.warn('Directive leave-voice failed:', err instanceof Error ? err.message : err);
+        }
+        continue;
+      }
+
       if (directive.type === 'voice') {
         if (!isVoiceMemoConfigured()) {
           this.log.warn('Directive voice skipped: no TTS credentials configured');
@@ -717,6 +751,23 @@ export class LettaBot implements AgentSession {
           }
           this.log.info(`Directive voice: generated file ${outputPath} (${outputStats.size} bytes)`);
 
+          // If bot is in a voice channel for this guild, play TTS there
+          let playedInVoice = false;
+          if (typeof adapter.isInVoiceChannel === 'function' && typeof adapter.playVoiceAudio === 'function') {
+            try {
+              const inVoice = await adapter.isInVoiceChannel(chatId);
+              if (inVoice) {
+                playedInVoice = await adapter.playVoiceAudio(outputPath, chatId);
+                if (playedInVoice) {
+                  this.log.info(`Directive: played voice memo in voice channel (${directive.text.length} chars)`);
+                }
+              }
+            } catch (voiceErr) {
+              this.log.warn('Directive voice: voice channel playback failed, falling back to file send:', voiceErr instanceof Error ? voiceErr.message : voiceErr);
+            }
+          }
+
+          // Also send as audio file attachment in text channel (unless voice-only in future)
           await adapter.sendFile({
             chatId,
             filePath: outputPath,
@@ -724,7 +775,7 @@ export class LettaBot implements AgentSession {
             threadId,
           });
           acted = true;
-          this.log.info(`Directive: sent voice memo (${directive.text.length} chars)`);
+          this.log.info(`Directive: sent voice memo (${directive.text.length} chars)${playedInVoice ? ' + voice channel' : ''}`);
 
           // Clean up generated file
           try { await unlink(outputPath); } catch {}

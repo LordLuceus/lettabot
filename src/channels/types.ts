@@ -31,6 +31,14 @@ export interface ChannelAdapter {
   setStatus?(text: string | null): Promise<void>;  // Set custom status text (null to clear)
   getDmPolicy?(): string;
   getFormatterHints(): FormatterHints;
+
+  // Voice channel support (optional, currently Discord-only)
+  joinVoiceChannel?(channelId: string): Promise<boolean>;
+  leaveVoiceChannel?(channelIdOrGuildId?: string): Promise<boolean>;
+  /** Play audio file in voice channel. chatId is the text channel that triggered this (used to resolve guild). */
+  playVoiceAudio?(filePath: string, chatId: string): Promise<boolean>;
+  /** Returns true if the bot is currently in a voice channel for the guild containing chatId. */
+  isInVoiceChannel?(chatId: string): Promise<boolean>;
   
   // Event handlers (set by bot core)
   onMessage?: (msg: InboundMessage) => Promise<void>;

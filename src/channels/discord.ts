@@ -26,6 +26,16 @@ let Client: typeof import('discord.js').Client;
 let GatewayIntentBits: typeof import('discord.js').GatewayIntentBits;
 let Partials: typeof import('discord.js').Partials;
 
+export interface DiscordVoiceConfig {
+  enabled?: boolean;           // Enable voice channel support (default: false)
+  autoJoin?: string[];         // Voice channel IDs to auto-join on startup
+  tts?: {
+    provider?: 'elevenlabs' | 'openai';
+    voiceId?: string;
+    model?: string;
+  };
+}
+
 export interface DiscordConfig {
   token: string;
   dmPolicy?: DmPolicy;      // 'pairing' (default), 'allowlist', or 'open'
@@ -39,6 +49,7 @@ export interface DiscordConfig {
   memberEvents?: boolean;      // Enable member join/leave events (default: false, requires GuildMembers intent)
   agentName?: string;       // For scoping daily limit counters in multi-agent mode
   ignoreBotReactions?: boolean;   // Ignore all bot reactions (default: true). Set false for multi-bot setups.
+  voice?: DiscordVoiceConfig;  // Voice channel support (join, TTS playback)
 }
 
 export function shouldProcessDiscordBotMessage(params: {
@@ -211,6 +222,7 @@ Ask the bot owner to approve with:
       GatewayIntentBits.MessageContent,
       GatewayIntentBits.DirectMessages,
       GatewayIntentBits.DirectMessageReactions,
+      GatewayIntentBits.GuildVoiceStates,
     ];
     // GuildMembers is a privileged intent — only request it when member events are configured.
     // The user must also enable "Server Members Intent" in the Discord Developer Portal.
@@ -264,6 +276,22 @@ Ask the bot owner to approve with:
           // Ignore poll errors
         }
       }, 5000); // Poll every 5 seconds
+
+      // Auto-join voice channels if configured
+      if (this.config.voice?.enabled && this.config.voice.autoJoin?.length) {
+        for (const voiceChannelId of this.config.voice.autoJoin) {
+          log.info(`Auto-joining voice channel ${voiceChannelId}...`);
+          this.joinVoiceChannel(voiceChannelId).then(success => {
+            if (success) {
+              log.info(`Auto-joined voice channel ${voiceChannelId}`);
+            } else {
+              log.warn(`Failed to auto-join voice channel ${voiceChannelId}`);
+            }
+          }).catch(err => {
+            log.warn(`Auto-join voice error for ${voiceChannelId}:`, err instanceof Error ? err.message : err);
+          });
+        }
+      }
     });
 
     this.client.on('messageCreate', async (message) => {
@@ -572,6 +600,13 @@ Ask the bot owner to approve with:
       this.statusWatcher = null;
     }
     if (!this.running || !this.client) return;
+    // Destroy voice sessions before closing the client
+    try {
+      const { destroyAll } = await import('../voice/index.js');
+      destroyAll();
+    } catch {
+      // Voice module may not be available
+    }
     this.client.destroy();
     this.running = false;
   }
@@ -727,6 +762,109 @@ Ask the bot owner to approve with:
 
   supportsEditing(): boolean {
     return this.config.streaming ?? false;
+  }
+
+  // =========================================================================
+  // Voice channel support (Phase 1: playback only)
+  // =========================================================================
+
+  async joinVoiceChannel(channelId: string): Promise<boolean> {
+    if (!this.client) {
+      log.warn('Cannot join voice: Discord client not started');
+      return false;
+    }
+
+    try {
+      const channel = await this.client.channels.fetch(channelId);
+      if (!channel || !channel.isVoiceBased()) {
+        log.warn(`Cannot join voice: channel ${channelId} is not a voice channel`);
+        return false;
+      }
+
+      // Get guild from the voice channel
+      const guildId = 'guildId' in channel ? (channel as { guildId: string }).guildId : null;
+      const guild = guildId ? this.client.guilds.cache.get(guildId) : null;
+      if (!guild) {
+        log.warn(`Cannot join voice: guild not found for channel ${channelId}`);
+        return false;
+      }
+
+      const { joinChannel } = await import('../voice/index.js');
+      const session = await joinChannel(channelId, guild.id, guild.voiceAdapterCreator);
+      return !!session;
+    } catch (err) {
+      log.error('Failed to join voice channel:', err instanceof Error ? err.message : err);
+      return false;
+    }
+  }
+
+  async leaveVoiceChannel(channelIdOrGuildId?: string): Promise<boolean> {
+    try {
+      const { leaveChannel, getAllSessions, destroyAll } = await import('../voice/index.js');
+
+      if (!channelIdOrGuildId) {
+        // Leave all
+        destroyAll();
+        return true;
+      }
+
+      // Try as guild ID first
+      if (leaveChannel(channelIdOrGuildId)) return true;
+
+      // Try to resolve channel → guild
+      if (this.client) {
+        try {
+          const channel = await this.client.channels.fetch(channelIdOrGuildId);
+          if (channel && 'guildId' in channel) {
+            const guildId = (channel as { guildId: string }).guildId;
+            return leaveChannel(guildId);
+          }
+        } catch {
+          // Not a valid channel ID, might already be a guild ID
+        }
+      }
+
+      return false;
+    } catch (err) {
+      log.error('Failed to leave voice channel:', err instanceof Error ? err.message : err);
+      return false;
+    }
+  }
+
+  async playVoiceAudio(filePath: string, chatId: string): Promise<boolean> {
+    if (!this.client) return false;
+
+    try {
+      // Resolve chatId → guild ID
+      const channel = await this.client.channels.fetch(chatId);
+      if (!channel) return false;
+
+      const guildId = 'guildId' in channel ? (channel as { guildId: string }).guildId : null;
+      if (!guildId) return false;
+
+      const { playAudioFile } = await import('../voice/index.js');
+      return playAudioFile(guildId, filePath);
+    } catch (err) {
+      log.warn('Failed to play voice audio:', err instanceof Error ? err.message : err);
+      return false;
+    }
+  }
+
+  async isInVoiceChannel(chatId: string): Promise<boolean> {
+    if (!this.client) return false;
+
+    try {
+      const channel = await this.client.channels.fetch(chatId);
+      if (!channel) return false;
+
+      const guildId = 'guildId' in channel ? (channel as { guildId: string }).guildId : null;
+      if (!guildId) return false;
+
+      const { getSession } = await import('../voice/index.js');
+      return !!getSession(guildId);
+    } catch {
+      return false;
+    }
   }
 
   private async handleReactionEvent(
