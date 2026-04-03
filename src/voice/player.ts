@@ -5,7 +5,7 @@
  * Supports OGG/Opus, MP3, and other formats via @discordjs/voice's AudioResource.
  */
 
-import { createReadStream } from 'node:fs';
+import { createReadStream, readSync, openSync, closeSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { createLogger } from '../logger.js';
 import { getSession, type VoiceSessionInfo } from './connection.js';
@@ -32,6 +32,25 @@ async function loadPlayerDeps(): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+/** OGG files start with "OggS" magic bytes */
+const OGG_MAGIC = Buffer.from([0x4f, 0x67, 0x67, 0x53]); // "OggS"
+
+/**
+ * Read the first 4 bytes of a file to determine the actual audio format.
+ * Returns StreamType.OggOpus if it's a real OGG container, otherwise Arbitrary.
+ */
+function detectStreamType(filePath: string): typeof StreamType.OggOpus | typeof StreamType.Arbitrary {
+  try {
+    const fd = openSync(filePath, 'r');
+    const buf = Buffer.alloc(4);
+    readSync(fd, buf, 0, 4, 0);
+    closeSync(fd);
+    return buf.equals(OGG_MAGIC) ? StreamType.OggOpus : StreamType.Arbitrary;
+  } catch {
+    return StreamType.Arbitrary;
   }
 }
 
@@ -72,22 +91,49 @@ export async function playAudioFile(
     return false;
   }
 
-  // OGG/Opus is Discord's native voice codec — stream it directly without FFmpeg.
-  // For other formats, fall back to the default (which requires FFmpeg).
-  const isOgg = filePath.endsWith('.ogg') || filePath.endsWith('.opus');
-  const resource = createAudioResource(createReadStream(filePath), {
-    inputType: isOgg ? StreamType.OggOpus : StreamType.Arbitrary,
+  // Detect actual format from magic bytes — don't trust the file extension.
+  // ElevenLabs outputs real OGG/Opus, but OpenAI defaults to MP3 even with .ogg extension.
+  const inputType = detectStreamType(filePath);
+  log.info(`Audio format detected: ${inputType === StreamType.OggOpus ? 'OGG/Opus (native)' : 'arbitrary (needs FFmpeg)'}`);
+
+  const resource = createAudioResource(createReadStream(filePath), { inputType });
+
+  // Catch playback errors so they don't crash the process
+  const playbackPromise = new Promise<boolean>((resolve) => {
+    const onError = (err: Error) => {
+      log.warn(`Audio playback error: ${err.message}`);
+      cleanup();
+      resolve(false);
+    };
+    const onIdle = () => {
+      cleanup();
+      resolve(true);
+    };
+    const cleanup = () => {
+      session.player.removeListener('error', onError);
+      session.player.removeListener(AudioPlayerStatus.Idle, onIdle);
+    };
+
+    session.player.on('error', onError);
+    // Auto-resolve when playback finishes (even if not waiting for completion)
+    session.player.once(AudioPlayerStatus.Idle, onIdle);
+
+    // Timeout safety net
+    setTimeout(() => {
+      cleanup();
+      resolve(false);
+      log.warn('Audio playback timed out after 120s');
+    }, 120_000);
   });
+
   session.player.play(resource);
 
   if (options?.waitForCompletion) {
-    try {
-      await entersState(session.player, AudioPlayerStatus.Idle, 120_000);
-    } catch {
-      log.warn('Audio playback timed out after 120s');
-    }
+    return playbackPromise;
   }
 
+  // Even when not waiting, attach error handler so it doesn't crash
+  playbackPromise.catch(() => {}); // Prevent unhandled rejection
   return true;
 }
 
