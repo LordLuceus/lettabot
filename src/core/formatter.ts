@@ -290,6 +290,12 @@ function buildChatContextLines(msg: InboundMessage, options: EnvelopeOptions): s
     }
   }
 
+  // Voice channel status (Discord only)
+  if (msg.channel === 'discord') {
+    const inVoice = msg.formatterHints?.voiceConnected ?? false;
+    lines.push(`- **Voice**: ${inVoice ? 'Connected — \`<voice>\` directives play TTS in voice channel' : 'Not connected'}`);
+  }
+
   return lines;
 }
 
@@ -366,10 +372,8 @@ function buildResponseDirectives(msg: InboundMessage): string[] {
     lines.push(`- \`<actions><set-status clear="true" /></actions>\` — clear custom status`);
   }
 
-  // voice channel (Discord only)
+  // voice channel directives (Discord only)
   if (msg.channel === 'discord') {
-    const inVoice = msg.formatterHints?.voiceConnected ?? false;
-    lines.push(`- **Voice status**: ${inVoice ? '🔊 Connected to voice channel — `<voice>` directives will play TTS audio there' : '🔇 Not in a voice channel'}`);
     lines.push(`- \`<actions><join-voice channel="VOICE_CHANNEL_ID" /></actions>\` — join a voice channel (use \`lettabot-channels list\` to find voice channel IDs)`);
     lines.push(`- \`<actions><leave-voice /></actions>\` — leave the current voice channel`);
   }
