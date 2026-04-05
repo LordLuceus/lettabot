@@ -213,3 +213,162 @@ lettabot-tts "TTS health check"
 ### Telegram voice privacy
 
 If the bot sends audio files instead of voice bubbles on Telegram, the recipient has voice message privacy enabled (Telegram Premium feature). They can allow voice messages via Settings > Privacy and Security > Voice Messages.
+
+---
+
+## Discord Voice Channels
+
+LettaBot can join Discord voice channels and play TTS audio in real time. When the bot is in a voice channel, `<voice>` directives play audio directly in the channel (in addition to sending the usual file attachment in text chat).
+
+This is a **half-duplex** implementation: the bot can speak but cannot hear. Voice receive (speech-to-text) is planned for a future release.
+
+### Prerequisites
+
+1. **FFmpeg** must be installed and available in `PATH`. All TTS audio is transcoded through FFmpeg before playback.
+   - Docker: already included in the official LettaBot image
+   - Linux: `apt install ffmpeg` / `dnf install ffmpeg`
+   - macOS: `brew install ffmpeg`
+
+2. **Discord bot permissions** — the bot needs these additional permissions in the voice channel:
+   - `Connect` — join the voice channel
+   - `Speak` — transmit audio
+
+   Update your invite URL to include voice permissions, or grant them via Server Settings → Roles.
+
+3. **Gateway intent** — `GuildVoiceStates` is automatically enabled when voice is configured. No manual action needed.
+
+### Configuration
+
+Add a `voice` section to your Discord channel config:
+
+```yaml
+channels:
+  discord:
+    enabled: true
+    token: "your-bot-token"
+    voice:
+      enabled: true
+      autoJoin:                          # Voice channel IDs to join on startup
+        - "1084504969052430379"
+      tts:                               # Optional: override global TTS settings for voice
+        provider: elevenlabs             # or 'openai'
+        voiceId: onwK4e9ZLuTAKqWW03F9
+        model: eleven_multilingual_v2
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `voice.enabled` | boolean | `false` | Enable voice channel support |
+| `voice.autoJoin` | string[] | -- | Voice channel IDs to auto-join on startup |
+| `voice.tts.provider` | string | -- | TTS provider override (`elevenlabs` or `openai`). Falls back to global `tts` config |
+| `voice.tts.voiceId` | string | -- | Voice ID override for voice channel TTS |
+| `voice.tts.model` | string | -- | Model override for voice channel TTS |
+
+If `voice.tts` is not set, voice playback uses the same TTS provider configured in the global `tts` section.
+
+### Agent Directives
+
+The agent controls voice channels through XML directives in its responses:
+
+**Join a voice channel:**
+```xml
+<actions><join-voice channel="VOICE_CHANNEL_ID" /></actions>
+```
+
+**Leave the current voice channel:**
+```xml
+<actions><leave-voice /></actions>
+```
+
+**Speak in voice (when connected):**
+```xml
+<actions><voice>Hello everyone, welcome to the channel!</voice></actions>
+```
+
+When the bot is connected to a voice channel, `<voice>` directives generate TTS audio and play it in the voice channel. The audio file attachment is still sent in the text channel as well.
+
+If the bot is **not** in a voice channel, `<voice>` only sends the audio as a text channel attachment (the existing behavior).
+
+### Voice Status
+
+The agent sees its current voice connection state in the **Chat Context** section of every Discord message:
+
+- `Voice: Connected — <voice> directives play TTS in voice channel`
+- `Voice: Not connected`
+
+This prevents the agent from attempting voice playback when it isn't in a channel (e.g., after a restart).
+
+### Finding Voice Channel IDs
+
+Use the `lettabot-channels list` CLI to find voice channel IDs:
+
+```bash
+lettabot-channels list
+```
+
+Voice channels are prefixed with 🔊 and show their type:
+
+```
+Guild: My Server (1084504967223709756)
+  #general              1084504969052430376  text
+  🔊 Voice Chat         1084504969052430379  voice
+  🔊 Music              1084504969052430380  voice
+```
+
+Use the numeric ID (e.g., `1084504969052430379`) in your config or in `<join-voice>` directives.
+
+### Example: Complete Voice Setup
+
+```yaml
+# Global TTS config (used by voice memos in all channels)
+tts:
+  provider: elevenlabs
+  apiKey: sk_475a...
+  voiceId: onwK4e9ZLuTAKqWW03F9
+  model: eleven_multilingual_v2
+
+channels:
+  discord:
+    enabled: true
+    token: "your-bot-token"
+    voice:
+      enabled: true
+      autoJoin:
+        - "1084504969052430379"    # Auto-join "Voice Chat" on startup
+```
+
+With this config, the bot will:
+1. Connect to Discord
+2. Automatically join the "Voice Chat" channel
+3. Play TTS audio in the voice channel whenever the agent uses `<voice>` directives
+4. Show voice connection status in the agent's message context
+
+### Troubleshooting
+
+#### No audio plays in voice channel
+
+1. Check that `ffmpeg` is installed: `which ffmpeg`
+2. Check the logs for TTS generation errors — the `<voice>` directive must successfully generate an audio file before playback
+3. Verify the bot has `Connect` and `Speak` permissions in the voice channel
+
+#### Bot joins but immediately disconnects
+
+1. Check for errors in the logs after the join message
+2. Ensure the voice channel isn't full (check the user limit)
+3. Verify the channel ID is correct (use `lettabot-channels list`)
+
+#### Bot doesn't auto-join on startup
+
+1. Confirm `voice.enabled: true` is set
+2. Confirm `voice.autoJoin` contains valid voice channel IDs (not text channel IDs)
+3. Check that the bot has access to the voice channel (permissions + visibility)
+
+#### "FFmpeg/avconv not found" in logs
+
+FFmpeg is required for voice playback. Install it or ensure it's in the container image. See [Docker checklist](#docker-checklist-for-voice) above.
+
+#### Agent tries to use `<voice>` when not in a channel
+
+The agent sees its voice status in every message. If it still tries to play voice when not connected, check that:
+1. `voice.enabled` is `true` in your config
+2. The bot was in the channel when the message was received (not between a disconnect and reconnect)
