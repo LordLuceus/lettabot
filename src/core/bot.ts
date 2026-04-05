@@ -714,7 +714,12 @@ export class LettaBot implements AgentSession {
 
         try {
           const outputPath = await new Promise<string>((resolve, reject) => {
-            execFile(ttsPath, [directive.text], {
+            // On Windows, bash scripts can't be executed directly (no shebang support).
+            // Run through bash explicitly — requires Git Bash or WSL.
+            const isWindows = process.platform === 'win32';
+            const ttsCommand = isWindows ? 'bash' : ttsPath;
+            const ttsArgs = isWindows ? [ttsPath, directive.text] : [directive.text];
+            execFile(ttsCommand, ttsArgs, {
               cwd: this.config.workingDir,
               env: { ...process.env, LETTABOT_WORKING_DIR: this.config.workingDir },
               timeout: 30_000,
