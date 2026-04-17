@@ -1410,7 +1410,7 @@ describe('SDK session contract', () => {
       }),
       close: vi.fn(() => undefined),
       recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
-      agentId: 'agent-runid-test',
+      agentId: 'agent-contract-test',
       conversationId: 'conversation-runid-test',
     };
 
@@ -1449,7 +1449,7 @@ describe('SDK session contract', () => {
       ),
       close: vi.fn(() => undefined),
       recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
-      agentId: 'agent-reuse-false',
+      agentId: 'agent-contract-test',
       conversationId: 'conversation-reuse-false',
     };
 
@@ -1483,7 +1483,7 @@ describe('SDK session contract', () => {
       ),
       close: vi.fn(() => undefined),
       recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
-      agentId: 'agent-background-directives',
+      agentId: 'agent-contract-test',
       conversationId: 'conversation-background-directives',
     };
 
@@ -1570,7 +1570,7 @@ describe('SDK session contract', () => {
       ),
       close: vi.fn(() => undefined),
       recoverPendingApprovals: vi.fn(async () => ({ recovered: false, unsupported: true, detail: 'mock' })),
-      agentId: 'agent-queue-leak-test',
+      agentId: 'agent-contract-test',
       conversationId: 'conversation-queue-leak-test',
     };
 
