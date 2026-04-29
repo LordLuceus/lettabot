@@ -6,21 +6,22 @@
  *   lettabot-status set "Working on something cool"
  *   lettabot-status clear
  *
- * Status is persisted to data/bot-status.json and restored on bot startup.
+ * Status is persisted to bot-status.json (in the process cwd, alongside
+ * lettabot.yaml and lettabot-api.json) and restored on bot startup.
  * The running bot watches this file and applies changes automatically.
  *
  * Note: Only works for Discord (other platforms don't support custom status text).
  */
 
 import { promises as fs } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 
 // Config loaded from lettabot.yaml
 import { loadAppConfigOrExit, applyConfigToEnv } from '../config/index.js';
 const config = loadAppConfigOrExit();
 applyConfigToEnv(config);
 
-const STATUS_FILE = join(process.cwd(), 'data', 'bot-status.json');
+const STATUS_FILE = join(process.cwd(), 'bot-status.json');
 
 const DISCORD_STATUS_MAX_LENGTH = 128;
 
@@ -29,7 +30,6 @@ async function setStatus(text: string): Promise<void> {
     console.warn(`Warning: Status text is ${text.length} chars (Discord limit: ${DISCORD_STATUS_MAX_LENGTH}). It will be truncated.`);
     text = text.slice(0, DISCORD_STATUS_MAX_LENGTH - 1) + '\u2026';
   }
-  await fs.mkdir(dirname(STATUS_FILE), { recursive: true });
   await fs.writeFile(STATUS_FILE, JSON.stringify({ message: text, timestamp: Date.now() }, null, 2));
   console.log(`✓ Status set: ${text}`);
   console.log('  The running bot will pick up this change shortly.');

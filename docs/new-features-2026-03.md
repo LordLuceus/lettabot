@@ -108,7 +108,7 @@ lettabot-status show
 
 ### Persistence
 
-The status is saved to `data/bot-status.json` and automatically restored when the bot restarts. The running bot polls this file every 5 seconds, so changes made via the CLI are picked up without a restart.
+The status is saved to `bot-status.json` (in the bot's working directory) and automatically restored when the bot restarts. The running bot polls this file every 5 seconds, so changes made via the CLI are picked up without a restart.
 
 ### No config changes needed
 

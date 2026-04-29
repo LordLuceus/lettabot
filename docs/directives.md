@@ -115,7 +115,7 @@ Sets the bot's custom status text (Discord only). Can be content-bearing or self
 - Self-closing with text: `<set-status text="Your status text" />`
 - Clear status: `<set-status clear="true" />`
 
-**Persistence:** Status is saved to `data/bot-status.json` and automatically restored on bot restart.
+**Persistence:** Status is saved to `bot-status.json` (in the bot's working directory, alongside `lettabot.yaml`) and automatically restored on bot restart.
 
 **CLI alternative:** In silent mode (heartbeats, cron), use `lettabot-status set "text"` or `lettabot-status clear`.
 

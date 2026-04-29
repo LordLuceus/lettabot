@@ -965,13 +965,12 @@ Ask the bot owner to approve with:
 // ── Status Persistence ───────────────────────────────────────────────────────
 
 import { promises as fs } from 'node:fs';
-import { join as pathJoin, dirname } from 'node:path';
+import { join as pathJoin } from 'node:path';
 
-const STATUS_FILE = pathJoin(process.cwd(), 'data', 'bot-status.json');
+const STATUS_FILE = pathJoin(process.cwd(), 'bot-status.json');
 
 async function saveDiscordStatus(text: string | null): Promise<void> {
   try {
-    await fs.mkdir(dirname(STATUS_FILE), { recursive: true });
     if (text) {
       await fs.writeFile(STATUS_FILE, JSON.stringify({ message: text, timestamp: Date.now() }, null, 2));
     } else {
