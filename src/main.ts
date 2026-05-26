@@ -28,7 +28,7 @@ import { resolveSessionMemfs } from './config/memfs.js';
 import { getCronDataDir, getDataDir, getWorkingDir, hasRailwayVolume, resolveWorkingDirPath } from './utils/paths.js';
 import { parseCsvList, parseNonNegativeNumber } from './utils/parse.js';
 import { createLogger, setLogLevel } from './logger.js';
-import { loadStoredAgentId, refreshTokensIfNeeded, withDiscoveryLock } from './startup/bootstrap.js';
+import { loadStoredAgentId, withDiscoveryLock } from './startup/bootstrap.js';
 
 const log = createLogger('Config');
 
@@ -58,9 +58,8 @@ if (process.env.DEBUG === '1' && !process.env.DEBUG_SDK) {
 syncProviders(yamlConfig).catch(err => log.error('Failed to sync providers:', err));
 
 const STORE_PATH = resolve(getDataDir(), 'lettabot-agent.json');
-const currentBaseUrl = process.env.LETTA_BASE_URL || 'https://api.letta.com';
+const currentBaseUrl = process.env.LETTA_BASE_URL || 'http://localhost:8283';
 loadStoredAgentId(STORE_PATH, currentBaseUrl);
-await refreshTokensIfNeeded();
 
 import { normalizeAgents } from './config/types.js';
 import { LettaGateway } from './core/gateway.js';

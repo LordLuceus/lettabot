@@ -1,9 +1,9 @@
 /**
- * Shared utilities for model selection UI
- * 
- * Follows letta-code approach:
- * - Free plan users see free models (GLM, MiniMax) + BYOK options
- * - Paid users see all models with featured/recommended at top
+ * Shared utilities for model selection UI.
+ *
+ * Lettabot fetches the available model list from the configured Letta server.
+ * The static `models.json` catalog is used as a fallback hint for the default
+ * model handle.
  */
 
 import type * as p from '@clack/prompts';
@@ -22,255 +22,56 @@ export interface ModelInfo {
 }
 
 /**
- * Get billing tier from Letta API
- * Uses /v1/metadata/balance endpoint (same as letta-code)
- * 
- * @param apiKey - The API key to use
- * @param isSelfHosted - If true, skip billing check (Docker/custom servers have no tiers)
+ * Get a sensible default model handle from the static catalog.
  */
-export async function getBillingTier(apiKey?: string, isSelfHosted?: boolean): Promise<string | null> {
-  try {
-    // Docker/custom servers don't have billing tiers.
-    if (isSelfHosted) {
-      return null;
-    }
-    
-    if (!apiKey) {
-      return 'free';
-    }
-    
-    // Always use Letta API for billing check (not process.env.LETTA_BASE_URL)
-    const response = await fetch('https://api.letta.com/v1/metadata/balance', {
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-    });
-    
-    if (!response.ok) {
-      return 'free';
-    }
-    
-    const data = await response.json() as { billing_tier?: string };
-    const tier = data.billing_tier?.toLowerCase() ?? 'free';
-    return tier;
-  } catch {
-    return 'free';
-  }
-}
-
-/**
- * Get the default model for a billing tier
- */
-export function getDefaultModelForTier(billingTier?: string | null): string {
-  // Free tier gets glm-4.7 (a free model)
-  if (billingTier?.toLowerCase() === 'free') {
-    const freeDefault = models.find(m => m.id === 'glm-4.7');
-    if (freeDefault) return freeDefault.handle;
-  }
-  // Everyone else gets the standard default
+export function getDefaultModelHandle(): string {
   const defaultModel = models.find(m => m.isDefault);
   return defaultModel?.handle ?? models[0]?.handle ?? 'anthropic/claude-sonnet-4-5-20250929';
 }
 
-interface ByokModel {
-  handle: string;
-  name: string;
-  display_name?: string;
-  provider_name: string;
-  provider_type: string;
-}
-
 /**
- * Fetch BYOK models from Letta API
+ * Build model selection options by listing models on the configured server.
+ * Falls back to an empty "custom only" list if the server is unreachable.
  */
-async function fetchByokModels(apiKey?: string): Promise<ByokModel[]> {
-  try {
-    const key = apiKey || process.env.LETTA_API_KEY;
-    if (!key) return [];
-    
-    const response = await fetch('https://api.letta.com/v1/models?provider_category=byok', {
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${key}`,
-      },
-    });
-    
-    if (!response.ok) return [];
-    
-    const models = await response.json() as ByokModel[];
-    return models;
-  } catch {
-    return [];
-  }
-}
-
-function addModelOption(
-  options: Array<{ value: string; label: string; hint: string }>,
-  seen: Set<string>,
-  option: { value: string; label: string; hint: string },
-): void {
-  if (seen.has(option.value)) {
-    return;
-  }
-  options.push(option);
-  seen.add(option.value);
-}
-
-/**
- * Build model selection options based on billing tier
- * Returns array ready for @clack/prompts select()
- * 
- * For free users: Show free static models first.
- * For paid users: Show featured models first, then full static list.
- * For all users: show connected provider models (OAuth/API key providers).
- * For Docker/custom servers: fetch models from server
- */
-export async function buildModelOptions(options?: {
-  billingTier?: string | null;
-  isSelfHosted?: boolean;
-  apiKey?: string;
-}): Promise<Array<{ value: string; label: string; hint: string }>> {
-  const billingTier = options?.billingTier;
-  const isSelfHosted = options?.isSelfHosted;
-  const isFreeTier = billingTier?.toLowerCase() === 'free';
-  
-  // For Docker/custom servers, fetch models from server
-  if (isSelfHosted) {
-    return buildServerModelOptions();
-  }
-  
-  const result: Array<{ value: string; label: string; hint: string }> = [];
-  const seenHandles = new Set<string>();
-  
-  if (isFreeTier) {
-    // Free tier: Show free models first
-    const freeModels = models.filter(m => m.free);
-    freeModels.forEach(model => {
-      addModelOption(result, seenHandles, {
-        value: model.handle,
-        label: model.label,
-        hint: `🆓 Free - ${model.description}`,
-      });
-    });
-  } else {
-    // Paid tier: Show featured models first
-    const featured = models.filter(m => m.isFeatured);
-    const nonFeatured = models.filter(m => !m.isFeatured);
-    
-    featured.forEach(model => {
-      addModelOption(result, seenHandles, {
-        value: model.handle,
-        label: model.label,
-        hint: model.free ? `🆓 Free - ${model.description}` : `⭐ ${model.description}`,
-      });
-    });
-    
-    nonFeatured.forEach(model => {
-      addModelOption(result, seenHandles, {
-        value: model.handle,
-        label: model.label,
-        hint: model.description,
-      });
-    });
-  }
-  
-  // Include connected provider models for both free and paid users.
-  const byokModels = await fetchByokModels(options?.apiKey);
-  if (byokModels.length > 0) {
-    // ChatGPT subscription models get their own section at the top.
-    const chatgptModels = byokModels.filter(m => m.provider_type === 'chatgpt_oauth');
-    const otherModels = byokModels.filter(m => m.provider_type !== 'chatgpt_oauth');
-    
-    if (chatgptModels.length > 0) {
-      addModelOption(result, seenHandles, {
-        value: '__chatgpt_header__',
-        label: '── ChatGPT Subscription ──',
-        hint: 'Included with your ChatGPT plan',
-      });
-      chatgptModels.forEach(model => {
-        addModelOption(result, seenHandles, {
-          value: model.handle,
-          label: model.display_name || model.name,
-          hint: 'ChatGPT',
-        });
-      });
-    }
-    
-    if (otherModels.length > 0) {
-      addModelOption(result, seenHandles, {
-        value: '__byok_header__',
-        label: '── Your API Keys ──',
-        hint: 'Models from your API keys',
-      });
-      otherModels.forEach(model => {
-        addModelOption(result, seenHandles, {
-          value: model.handle,
-          label: model.display_name || model.name,
-          hint: `🔑 ${model.provider_name}`,
-        });
-      });
-    }
-  }
-  
-  // Add custom option
-  addModelOption(result, seenHandles, { 
-    value: '__custom__', 
-    label: 'Other (specify handle)', 
-    hint: 'e.g. anthropic/claude-sonnet-4-5-20250929' 
-  });
-  
-  return result;
-}
-
-/**
- * Build model options from Docker/custom server
- */
-async function buildServerModelOptions(): Promise<Array<{ value: string; label: string; hint: string }>> {
+export async function buildModelOptions(): Promise<Array<{ value: string; label: string; hint: string }>> {
   const { listModels } = await import('../tools/letta-api.js');
-  
-  // Fetch all models from server
-  const serverModels = await listModels();
-  
+
+  const serverModels = await listModels().catch(() => []);
+
   const result: Array<{ value: string; label: string; hint: string }> = [];
-  
-  // Sort by display name
-  const sorted = serverModels.sort((a, b) => 
+
+  // Sort by display name for readability.
+  const sorted = serverModels.sort((a, b) =>
     (a.display_name || a.name).localeCompare(b.display_name || b.name)
   );
-  
+
   result.push(...sorted.map(m => ({
     value: m.handle,
     label: m.display_name || m.name,
     hint: m.handle,
   })));
-  
-  // Add custom option
-  result.push({ 
-    value: '__custom__', 
-    label: 'Other (specify handle)', 
-    hint: 'e.g. anthropic/claude-sonnet-4-5-20250929' 
+
+  // Add custom option so operators can always type a handle by hand.
+  result.push({
+    value: '__custom__',
+    label: 'Other (specify handle)',
+    hint: 'e.g. anthropic/claude-sonnet-4-5-20250929',
   });
-  
+
   return result;
 }
 
 /**
- * Handle model selection including custom input
- * Returns the selected model handle or null if cancelled/header selected
+ * Handle model selection including custom input.
+ * Returns the selected model handle or null if cancelled/header selected.
  */
 export async function handleModelSelection(
   selection: string | symbol,
   promptFn: typeof p.text,
 ): Promise<string | null> {
-  // Handle cancellation
   const p = await import('@clack/prompts');
   if (p.isCancel(selection)) return null;
-  
-  // Skip header selections
-  if (selection === '__byok_header__' || selection === '__chatgpt_header__') return null;
-  
-  // Handle custom model input
+
   if (selection === '__custom__') {
     const custom = await promptFn({
       message: 'Model handle',
@@ -279,7 +80,6 @@ export async function handleModelSelection(
     if (p.isCancel(custom) || !custom) return null;
     return custom as string;
   }
-  
-  // Regular model selection
+
   return selection as string;
 }

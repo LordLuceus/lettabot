@@ -237,7 +237,6 @@ Commands:
   config tui           Interactive core config editor
   config encode        Encode config file as base64 for LETTABOT_CONFIG_YAML
   config decode        Decode and print LETTABOT_CONFIG_YAML env var
-  connect <provider>   Connect model providers (e.g., chatgpt/codex)
   model                Interactive model selector
   model show           Show current agent model
   model set <handle>   Set model by handle (e.g., anthropic/claude-sonnet-4-5-20250929)
@@ -247,7 +246,6 @@ Commands:
   channels add <ch>    Add a channel (telegram, slack, discord, whatsapp, signal)
   channels remove <ch> Remove a channel
   bluesky              Manage Bluesky and run action commands (post/like/repost/read)
-  logout               Logout from Letta Platform (revoke OAuth tokens)
   skills               Configure which skills are enabled
   skills status        Show skills status
   todo                 Manage per-agent to-dos
@@ -276,11 +274,11 @@ Examples:
   lettabot todo list --actionable
   lettabot pairing list telegram             # Show pending Telegram pairings
   lettabot pairing approve telegram ABCD1234 # Approve a pairing code
-  lettabot connect chatgpt                  # Connect ChatGPT subscription (via OAuth)
 
 Environment:
-  LETTABOT_CONFIG_YAML    Inline YAML or base64-encoded config (for cloud deploys)
-  LETTA_API_KEY           API key from app.letta.com
+  LETTABOT_CONFIG_YAML    Inline YAML or base64-encoded config (for container deploys)
+  LETTA_BASE_URL          Letta server URL (default: http://localhost:8283)
+  LETTA_API_KEY           API key for the configured Letta server (optional)
   TELEGRAM_BOT_TOKEN      Bot token from @BotFather
   TELEGRAM_DM_POLICY      DM access policy (pairing, allowlist, open)
   DISCORD_BOT_TOKEN       Discord bot token
@@ -675,18 +673,6 @@ async function main() {
       break;
     }
 
-    case 'connect': {
-      const { runLettaConnect } = await import('./commands/letta-connect.js');
-      const requestedProvider = subCommand || 'chatgpt';
-      const providers = requestedProvider === 'chatgpt' ? ['chatgpt', 'codex'] : [requestedProvider];
-      const connected = await runLettaConnect(providers);
-      if (!connected) {
-        console.error(`Failed to run letta connect for provider: ${requestedProvider}`);
-        process.exit(1);
-      }
-      break;
-    }
-    
     case 'channels':
     case 'channel': {
       const { channelManagementCommand } = await import('./cli/channel-management.js');
@@ -947,36 +933,6 @@ async function main() {
       break;
     }
       
-    case 'logout': {
-      const { revokeToken } = await import('./auth/oauth.js');
-      const { loadTokens, deleteTokens } = await import('./auth/tokens.js');
-      const p = await import('@clack/prompts');
-      
-      p.intro('Logout from Letta Platform');
-      
-      const tokens = loadTokens();
-      if (!tokens) {
-        p.log.info('No stored credentials found.');
-        break;
-      }
-      
-      const spinner = p.spinner();
-      spinner.start('Revoking token...');
-      
-      // Revoke the refresh token on the server
-      if (tokens.refreshToken) {
-        await revokeToken(tokens.refreshToken);
-      }
-      
-      // Delete local tokens
-      deleteTokens();
-      
-      spinner.stop('Logged out successfully');
-      p.log.info('Note: LETTA_API_KEY in .env was not modified. Remove it manually if needed.');
-      p.outro('Goodbye!');
-      break;
-    }
-      
     case 'help':
     case '-h':
     case '--help':
@@ -985,7 +941,7 @@ async function main() {
       
     case undefined:
       console.log('Usage: lettabot <command>\n');
-      console.log('Commands: onboard, server, configure, connect, model, channels, bluesky, skills, set-conversation, reset-conversation, destroy, help\n');
+      console.log('Commands: onboard, server, configure, model, channels, bluesky, skills, set-conversation, reset-conversation, destroy, help\n');
       console.log('Run "lettabot help" for more information.');
       break;
       

@@ -1,27 +1,19 @@
 /**
- * Letta server URL utilities
+ * Letta server URL utilities.
  *
- * The heuristic is simple: Letta API lives at a known URL.
- * Everything else is a Docker/custom server.
+ * Lettabot only knows how to talk to a self-hosted Letta server at a URL the
+ * operator provides. Defaults to localhost when nothing is configured.
  */
 
-import { LETTA_API_URL } from '../auth/oauth.js';
+export const DEFAULT_LETTA_BASE_URL = 'http://localhost:8283';
 
 /**
- * Check if a URL points at Letta API (api.letta.com)
- *
- * @param url - The base URL to check. When absent, assumes Letta API (the default).
+ * Resolve the configured Letta server URL, falling back to localhost.
  */
-export function isLettaApiUrl(url?: string): boolean {
-  if (!url) return true; // no URL means the default (Letta API)
-  try {
-    const given = new URL(url);
-    const api = new URL(LETTA_API_URL);
-    return given.hostname === api.hostname;
-  } catch {
-    return false;
-  }
+export function resolveLettaBaseUrl(configuredBaseUrl?: string | null): string {
+  const url =
+    configuredBaseUrl ||
+    process.env.LETTA_BASE_URL ||
+    DEFAULT_LETTA_BASE_URL;
+  return url.replace(/\/$/, '');
 }
-
-// Backward-compatible alias.
-export const isLettaCloudUrl = isLettaApiUrl;

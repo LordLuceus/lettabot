@@ -8,8 +8,7 @@
  */
 
 import { getAgentModel, updateAgentModel } from '../tools/letta-api.js';
-import { buildModelOptions, handleModelSelection, getBillingTier } from '../utils/model-selection.js';
-import { isLettaApiUrl } from '../utils/server.js';
+import { buildModelOptions, handleModelSelection } from '../utils/model-selection.js';
 import { Store } from '../core/store.js';
 
 import { createLogger } from '../logger.js';
@@ -82,25 +81,10 @@ export async function modelInteractive(): Promise<void> {
     p.log.info(`Current model: ${currentModel}`);
   }
 
-  // Determine if using Docker/custom server
-  const baseUrl = process.env.LETTA_BASE_URL;
-  const isSelfHosted = !!baseUrl && !isLettaApiUrl(baseUrl);
-
-  // Get billing tier for Letta API users
-  let billingTier: string | null = null;
-  if (!isSelfHosted) {
-    const spinner = p.spinner();
-    spinner.start('Checking account...');
-    const apiKey = process.env.LETTA_API_KEY;
-    billingTier = await getBillingTier(apiKey, isSelfHosted);
-    spinner.stop(billingTier === 'free' ? 'Free plan' : `Plan: ${billingTier || 'Pro'}`);
-  }
-
-  // Build model options
+  // Build model options from the configured Letta server.
   const spinner = p.spinner();
   spinner.start('Fetching available models...');
-  const apiKey = process.env.LETTA_API_KEY;
-  const modelOptions = await buildModelOptions({ billingTier, isSelfHosted, apiKey });
+  const modelOptions = await buildModelOptions();
   spinner.stop(`${modelOptions.length} models available`);
 
   // Show model selector

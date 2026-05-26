@@ -16,7 +16,6 @@ import YAML from 'yaml';
 import type { LettaBotConfig, ProviderConfig } from './types.js';
 import { DEFAULT_CONFIG, canonicalizeServerMode, isApiServerMode, isDockerServerMode } from './types.js';
 import { isFleetConfig, fleetConfigToLettaBotConfig, setLoadedFromFleetConfig } from './fleet-adapter.js';
-import { LETTA_API_URL } from '../auth/oauth.js';
 
 import { createLogger } from '../logger.js';
 
@@ -650,8 +649,20 @@ export function applyConfigToEnv(config: LettaBotConfig): void {
   }
 }
 
-async function listProviders(apiKey: string): Promise<Array<{ id: string; name: string }>> {
-  const listResponse = await fetch(`${LETTA_API_URL}/v1/providers`, {
+/**
+ * Resolve the Letta server base URL for provider sync calls.
+ * Falls back to localhost so unconfigured installs still work locally.
+ */
+function resolveProvidersBaseUrl(config: { server: { baseUrl?: string } }): string {
+  const url =
+    config.server.baseUrl ||
+    process.env.LETTA_BASE_URL ||
+    'http://localhost:8283';
+  return url.replace(/\/$/, '');
+}
+
+async function listProviders(baseUrl: string, apiKey: string): Promise<Array<{ id: string; name: string }>> {
+  const listResponse = await fetch(`${baseUrl}/v1/providers`, {
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,
@@ -666,19 +677,20 @@ async function listProviders(apiKey: string): Promise<Array<{ id: string; name: 
 }
 
 /**
- * Create or update a BYOK provider on Letta API.
+ * Create or update a BYOK provider on the configured Letta server.
  * Returns whether the provider was created or updated.
  */
 export async function upsertProvider(
+  baseUrl: string,
   apiKey: string,
   provider: ProviderConfig,
   knownProviders?: Array<{ id: string; name: string }>,
 ): Promise<'created' | 'updated'> {
-  const existingProviders = knownProviders ?? await listProviders(apiKey);
+  const existingProviders = knownProviders ?? await listProviders(baseUrl, apiKey);
   const existing = existingProviders.find((p) => p.name === provider.name);
 
   if (existing) {
-    const response = await fetch(`${LETTA_API_URL}/v1/providers/${existing.id}`, {
+    const response = await fetch(`${baseUrl}/v1/providers/${existing.id}`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
@@ -692,7 +704,7 @@ export async function upsertProvider(
     return 'updated';
   }
 
-  const response = await fetch(`${LETTA_API_URL}/v1/providers`, {
+  const response = await fetch(`${baseUrl}/v1/providers`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -711,26 +723,27 @@ export async function upsertProvider(
 }
 
 /**
- * Create BYOK providers on Letta API
+ * Create BYOK providers on the configured Letta server.
  */
 export async function syncProviders(config: Partial<LettaBotConfig> & Pick<LettaBotConfig, 'server'>): Promise<void> {
-  if (!isApiServerMode(config.server.mode) || !config.server.apiKey) {
+  if (!config.server.apiKey) {
     return;
   }
-  
+
   if (!config.providers || config.providers.length === 0) {
     return;
   }
-  
+
   const apiKey = config.server.apiKey;
-  
+  const baseUrl = resolveProvidersBaseUrl(config);
+
   // List existing providers once, then pass to each upsert call.
-  const existingProviders = await listProviders(apiKey).catch(() => [] as Array<{ id: string; name: string }>);
+  const existingProviders = await listProviders(baseUrl, apiKey).catch(() => [] as Array<{ id: string; name: string }>);
   
   // Create or update each provider
   for (const provider of config.providers) {
     try {
-      const action = await upsertProvider(apiKey, provider, existingProviders);
+      const action = await upsertProvider(baseUrl, apiKey, provider, existingProviders);
       log.info(`${action === 'updated' ? 'Updated' : 'Created'} provider: ${provider.name}`);
     } catch (err) {
       log.error(`Failed to sync provider ${provider.name}:`, err);

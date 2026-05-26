@@ -8,9 +8,7 @@ import { spawnSync } from 'node:child_process';
 import * as p from '@clack/prompts';
 import { saveConfig, syncProviders, upsertProvider, isApiServerMode } from './config/index.js';
 import type { AgentConfig, LettaBotConfig } from './config/types.js';
-import { isLettaApiUrl } from './utils/server.js';
 import { parseCsvList, parseOptionalInt } from './utils/parse.js';
-import { runChatgptConnect } from './commands/letta-connect.js';
 import { CHANNELS, getChannelHint, isSignalCliInstalled, setupTelegram, setupSlack, setupDiscord, setupWhatsApp, setupSignal } from './channels/setup.js';
 
 // ============================================================================
@@ -34,7 +32,7 @@ function parseOptionalBoolean(value?: string): boolean | undefined {
 
 function readConfigFromEnv(existingConfig: any): any {
   return {
-    baseUrl: process.env.LETTA_BASE_URL || existingConfig.server?.baseUrl || 'https://api.letta.com',
+    baseUrl: process.env.LETTA_BASE_URL || existingConfig.server?.baseUrl || 'http://localhost:8283',
     apiKey: process.env.LETTA_API_KEY || existingConfig.server?.apiKey,
     agentId: process.env.LETTA_AGENT_ID || existingConfig.agent?.id,
     agentName: process.env.LETTA_AGENT_NAME || existingConfig.agent?.name || 'lettabot',
@@ -137,7 +135,7 @@ async function saveConfigFromEnv(config: any, configPath: string, existingConfig
   
   const lettabotConfig: Partial<LettaBotConfig> & Pick<LettaBotConfig, 'server'> = {
     server: {
-      mode: isLettaApiUrl(config.baseUrl) ? 'api' : 'docker',
+      mode: 'docker',
       baseUrl: config.baseUrl,
       apiKey: config.apiKey,
       ...(existingApiConfig ? { api: existingApiConfig } : {}),
@@ -156,22 +154,20 @@ async function saveConfigFromEnv(config: any, configPath: string, existingConfig
 
 interface OnboardConfig {
   // Auth
-  authMethod: 'keep' | 'oauth' | 'apikey' | 'docker' | 'selfhosted' | 'skip';
+  authMethod: 'keep' | 'apikey' | 'docker' | 'selfhosted' | 'skip';
   apiKey?: string;
   baseUrl?: string;
-  billingTier?: string;
-  
-  // Agent  
+
+  // Agent
   agentChoice: 'new' | 'existing' | 'env' | 'skip';
   agentId?: string;
   agentName?: string;
-  
+
   // Model (only for new agents)
   model?: string;
-  
+
   // BYOK/connected providers
   providers?: Array<{ id: string; name: string; apiKey: string }>;
-  chatgptConnected?: boolean;
   
   // Channels (with access control)
   telegram: {
@@ -650,207 +646,71 @@ export function applyOnboardEnvProjection(config: OnboardConfig, env: Record<str
 }
 
 const isPlaceholder = (val?: string) => !val || /^(your_|sk-\.\.\.|placeholder|example)/i.test(val);
-const isDockerAuthMethod = (method: OnboardConfig['authMethod']) => method === 'docker' || method === 'selfhosted';
 
 // ============================================================================
 // Step Functions
 // ============================================================================
 
 async function stepAuth(config: OnboardConfig, env: Record<string, string>): Promise<void> {
-  const { requestDeviceCode, pollForToken } = await import('./auth/oauth.js');
-  const { saveTokens, loadTokens, getOrCreateDeviceId, getDeviceName } = await import('./auth/tokens.js');
-  
-  const baseUrl = config.baseUrl || env.LETTA_BASE_URL || process.env.LETTA_BASE_URL;
-  const isLettaApi = isLettaApiUrl(baseUrl);
-  
-  const existingTokens = loadTokens();
-  // Check both env and config for existing API key
-  const realApiKey = config.apiKey || (isPlaceholder(env.LETTA_API_KEY) ? undefined : env.LETTA_API_KEY);
-  const validOAuthToken = isLettaApi ? existingTokens?.accessToken : undefined;
-  const hasExistingAuth = !!realApiKey || !!validOAuthToken;
-  const displayKey = realApiKey || validOAuthToken;
-  
-  // Determine label based on credential type
-  const getAuthLabel = () => {
-    if (validOAuthToken) return 'Use existing OAuth';
-    if (realApiKey?.startsWith('sk-let-')) return 'Use API key';
-    return 'Use existing';
-  };
-  
-  const authOptions = [
-    ...(hasExistingAuth ? [{ value: 'keep', label: getAuthLabel(), hint: displayKey?.slice(0, 20) + '...' }] : []),
-    ...(isLettaApi ? [{ value: 'oauth', label: 'Login to Letta Platform', hint: 'Opens browser' }] : []),
-    { value: 'apikey', label: 'Enter API Key manually', hint: 'Paste your key' },
-    { value: 'docker', label: 'Enter Docker server URL', hint: 'Local/custom Letta server' },
-    { value: 'skip', label: 'Skip', hint: 'Continue without auth' },
-  ];
-  
-  const authMethod = await p.select({
-    message: 'Authentication',
-    options: authOptions,
+  // Resolve the existing server URL (from prior config, env, or localhost default).
+  const existingBaseUrl =
+    config.baseUrl ||
+    env.LETTA_BASE_URL ||
+    process.env.LETTA_BASE_URL ||
+    'http://localhost:8283';
+  const existingApiKey =
+    config.apiKey || (isPlaceholder(env.LETTA_API_KEY) ? undefined : env.LETTA_API_KEY);
+
+  // Prompt for the Letta server URL. Empty input keeps the existing/default value.
+  const serverUrlInput = await p.text({
+    message: 'Letta server URL',
+    placeholder: `${existingBaseUrl} (press Enter to keep)`,
+    initialValue: existingBaseUrl,
   });
-  if (p.isCancel(authMethod)) { p.cancel('Setup cancelled'); process.exit(0); }
-  
-  config.authMethod = authMethod as OnboardConfig['authMethod'];
-  
-  if (authMethod === 'oauth') {
-    const spinner = p.spinner();
-    spinner.start('Requesting authorization...');
-    
-    try {
-      const deviceData = await requestDeviceCode();
-      spinner.stop('Authorization requested');
-      
-      p.note(
-        `Code: ${deviceData.user_code}\n` +
-        `URL: ${deviceData.verification_uri_complete}`,
-        'Open in Browser'
-      );
-      
-      try {
-        const open = (await import('open')).default;
-        await open(deviceData.verification_uri_complete, { wait: false });
-      } catch {}
-      
-      spinner.start('Waiting for authorization...');
-      const deviceId = getOrCreateDeviceId();
-      const deviceName = getDeviceName();
-      
-      const tokens = await pollForToken(
-        deviceData.device_code,
-        deviceData.interval,
-        deviceData.expires_in,
-        deviceId,
-        deviceName,
-      );
-      
-      spinner.stop('Authorized!');
-      
-      const now = Date.now();
-      saveTokens({
-        accessToken: tokens.access_token,
-        refreshToken: tokens.refresh_token,
-        tokenExpiresAt: now + tokens.expires_in * 1000,
-        deviceId,
-        deviceName,
-      });
-      
-      config.apiKey = tokens.access_token;
-      env.LETTA_API_KEY = tokens.access_token;
-      
-    } catch (err) {
-      spinner.stop('Authorization failed');
-      throw err;
-    }
-    
-  } else if (authMethod === 'apikey') {
-    const apiKey = await p.text({ 
-      message: 'API Key',
-      placeholder: 'sk-...',
-    });
-    if (p.isCancel(apiKey)) { p.cancel('Setup cancelled'); process.exit(0); }
-    if (apiKey) {
-      config.apiKey = apiKey;
-      env.LETTA_API_KEY = apiKey;
-    }
-  } else if (authMethod === 'docker' || authMethod === 'selfhosted') {
-    const serverUrl = await p.text({ 
-      message: 'Letta server URL',
-      placeholder: 'http://localhost:8283',
-      initialValue: config.baseUrl || 'http://localhost:8283',
-    });
-    if (p.isCancel(serverUrl)) { p.cancel('Setup cancelled'); process.exit(0); }
-    
-    const url = serverUrl || 'http://localhost:8283';
-    config.baseUrl = url;
-    env.LETTA_BASE_URL = url;
-    process.env.LETTA_BASE_URL = url; // Set immediately so model listing works
-    
-    // Ask for optional server password/token, pre-populate from env
-    const existingKey = process.env.LETTA_API_KEY || env.LETTA_API_KEY || '';
-    const serverToken = await p.text({
-      message: 'Server password or API key (optional)',
-      placeholder: 'Leave empty if server has no auth',
-      initialValue: existingKey,
-    });
-    if (p.isCancel(serverToken)) { p.cancel('Setup cancelled'); process.exit(0); }
-    
-    if (serverToken) {
-      config.apiKey = serverToken;
-      env.LETTA_API_KEY = serverToken;
-      process.env.LETTA_API_KEY = serverToken;
-    } else {
-      delete env.LETTA_API_KEY;
-      delete process.env.LETTA_API_KEY;
-    }
-  } else if (authMethod === 'keep') {
-    // For OAuth tokens, refresh if needed
-    if (existingTokens?.refreshToken) {
-      const { isTokenExpired } = await import('./auth/tokens.js');
-      const { refreshAccessToken } = await import('./auth/oauth.js');
-      
-      if (isTokenExpired(existingTokens)) {
-      const spinner = p.spinner();
-      spinner.start('Refreshing token...');
-      try {
-        const newTokens = await refreshAccessToken(
-          existingTokens.refreshToken,
-          existingTokens.deviceId,
-          getDeviceName(),
-        );
-        
-        const now = Date.now();
-        saveTokens({
-          accessToken: newTokens.access_token,
-          refreshToken: newTokens.refresh_token ?? existingTokens.refreshToken,
-          tokenExpiresAt: now + newTokens.expires_in * 1000,
-          deviceId: existingTokens.deviceId,
-          deviceName: existingTokens.deviceName,
-        });
-        
-        config.apiKey = newTokens.access_token;
-        env.LETTA_API_KEY = newTokens.access_token;
-        spinner.stop('Token refreshed');
-      } catch {
-        spinner.stop('Token refresh failed');
-        p.log.warning('Your session may have expired. Try "Login to Letta Platform" to re-authenticate.');
-      }
-      } else {
-        // Token not expired, use existing
-        config.apiKey = existingTokens.accessToken;
-        env.LETTA_API_KEY = existingTokens.accessToken!;
-      }
-    } else if (realApiKey) {
-      // Using existing API key
-      config.apiKey = realApiKey;
-      env.LETTA_API_KEY = realApiKey;
-    }
+  if (p.isCancel(serverUrlInput)) { p.cancel('Setup cancelled'); process.exit(0); }
+
+  const serverUrl = (serverUrlInput || existingBaseUrl).trim();
+  config.baseUrl = serverUrl;
+  env.LETTA_BASE_URL = serverUrl;
+  process.env.LETTA_BASE_URL = serverUrl; // Set immediately so model listing works.
+
+  // Prompt for an optional API key / server password.
+  const apiKeyInput = await p.text({
+    message: 'API key (optional)',
+    placeholder: 'Leave empty if your server has no auth',
+    initialValue: existingApiKey || '',
+  });
+  if (p.isCancel(apiKeyInput)) { p.cancel('Setup cancelled'); process.exit(0); }
+
+  const apiKey = (apiKeyInput || '').trim();
+  if (apiKey) {
+    config.apiKey = apiKey;
+    env.LETTA_API_KEY = apiKey;
+    process.env.LETTA_API_KEY = apiKey;
+    config.authMethod = 'apikey';
+  } else {
+    delete config.apiKey;
+    delete env.LETTA_API_KEY;
+    delete process.env.LETTA_API_KEY;
+    config.authMethod = 'docker';
   }
-  
-  // Validate connection (skip if 'skip' was chosen)
-  if (config.authMethod !== 'skip') {
-    const keyToValidate = config.apiKey || env.LETTA_API_KEY;
-    if (keyToValidate) {
-      process.env.LETTA_API_KEY = keyToValidate;
+
+  // Validate the connection.
+  const spinner = p.spinner();
+  spinner.start(`Checking connection to ${serverUrl}...`);
+  try {
+    const { testConnection } = await import('./tools/letta-api.js');
+    const ok = await testConnection();
+    spinner.stop(ok ? `Connected to ${serverUrl}` : 'Connection issue');
+
+    if (!ok) {
+      p.log.warn(`Could not connect to ${serverUrl}. Check URL and credentials.`);
+      const retry = await p.confirm({ message: 'Retry?', initialValue: true });
+      if (p.isCancel(retry)) { p.cancel('Setup cancelled'); process.exit(0); }
+      if (retry) return stepAuth(config, env);
     }
-    
-    const spinner = p.spinner();
-    const serverLabel = config.baseUrl || 'Letta API';
-    spinner.start(`Checking connection to ${serverLabel}...`);
-    try {
-      const { testConnection } = await import('./tools/letta-api.js');
-      const ok = await testConnection();
-      spinner.stop(ok ? `Connected to ${serverLabel}` : 'Connection issue');
-      
-      if (!ok && isDockerAuthMethod(config.authMethod)) {
-        p.log.warn(`Could not connect to ${config.baseUrl}. Check URL and credentials.`);
-        const retry = await p.confirm({ message: 'Retry authentication?', initialValue: true });
-        if (p.isCancel(retry)) { p.cancel('Setup cancelled'); process.exit(0); }
-        if (retry) return stepAuth(config, env);
-      }
-    } catch {
-      spinner.stop('Connection check skipped');
-    }
+  } catch {
+    spinner.stop('Connection check skipped');
   }
 }
 
@@ -935,12 +795,11 @@ type ByokProvider = {
   name: string;
   displayName: string;
   providerType: string;
-  isOAuth?: boolean;
 };
 
-// BYOK Provider definitions (same as letta-code)
+// BYOK Provider definitions. The Letta server stores these credentials and
+// uses them when calling out to the underlying provider.
 const BYOK_PROVIDERS: ByokProvider[] = [
-  { id: 'codex', name: 'chatgpt-plus-pro', displayName: 'ChatGPT / Codex', providerType: 'chatgpt_oauth', isOAuth: true },
   { id: 'anthropic', name: 'lc-anthropic', displayName: 'Anthropic (Claude)', providerType: 'anthropic' },
   { id: 'openai', name: 'lc-openai', displayName: 'OpenAI', providerType: 'openai' },
   { id: 'gemini', name: 'lc-gemini', displayName: 'Google Gemini', providerType: 'google_ai' },
@@ -950,74 +809,52 @@ const BYOK_PROVIDERS: ByokProvider[] = [
 ];
 
 async function stepProviders(config: OnboardConfig, env: Record<string, string>): Promise<void> {
-  if (isDockerAuthMethod(config.authMethod)) return;
-  const isFreeTier = config.billingTier === 'free';
-  const providerDefs = BYOK_PROVIDERS.filter(provider => isFreeTier || provider.id === 'codex');
-  if (providerDefs.length === 0) return;
-  
-  // Paid users only see the ChatGPT OAuth option -- use a confirm instead of multiselect.
-  const oauthOnly = providerDefs.length === 1 && providerDefs[0].isOAuth;
-  
-  let selectedProviders: string[];
-  if (oauthOnly) {
-    const connect = await p.confirm({
-      message: 'Connect your ChatGPT subscription? (via OAuth)',
-      initialValue: false,
-    });
-    if (p.isCancel(connect)) { p.cancel('Setup cancelled'); process.exit(0); }
-    selectedProviders = connect ? [providerDefs[0].id] : [];
-  } else {
-    const result = await p.multiselect({
-      message: 'Add connected providers (optional)',
-      options: providerDefs.map(provider => ({
-        value: provider.id,
-        label: provider.displayName,
-        hint: provider.isOAuth ? 'Connect your ChatGPT subscription via OAuth' : `Connect your ${provider.displayName} API key`,
-      })),
-      required: false,
-    });
-    if (p.isCancel(result)) { p.cancel('Setup cancelled'); process.exit(0); }
-    selectedProviders = (result as string[]) || [];
-  }
-  
+  // BYOK provider sync requires an API key to authenticate against the server.
+  const apiKey = config.apiKey || env.LETTA_API_KEY || process.env.LETTA_API_KEY;
+  if (!apiKey) return;
+
+  const result = await p.multiselect({
+    message: 'Add connected providers (optional)',
+    options: BYOK_PROVIDERS.map(provider => ({
+      value: provider.id,
+      label: provider.displayName,
+      hint: `Connect your ${provider.displayName} API key`,
+    })),
+    required: false,
+  });
+  if (p.isCancel(result)) { p.cancel('Setup cancelled'); process.exit(0); }
+  const selectedProviders = (result as string[]) || [];
+
   // If no providers selected, skip
   if (selectedProviders.length === 0) {
     return;
   }
-  
+
   const providersById = new Map((config.providers ?? []).map(provider => [provider.id, provider]));
-  const apiKey = config.apiKey || env.LETTA_API_KEY || process.env.LETTA_API_KEY;
-  
+  const baseUrl =
+    config.baseUrl ||
+    env.LETTA_BASE_URL ||
+    process.env.LETTA_BASE_URL ||
+    'http://localhost:8283';
+
   // Collect API keys for each selected provider
   for (const providerId of selectedProviders) {
     const provider = BYOK_PROVIDERS.find(p => p.id === providerId);
     if (!provider) continue;
-    if (provider.isOAuth) {
-      const connected = await runChatgptConnect({ LETTA_BASE_URL: config.baseUrl || 'https://api.letta.com' });
-      if (connected) {
-        config.chatgptConnected = true;
-      }
-      continue;
-    }
-    
+
     const providerKey = await p.text({
       message: `${provider.displayName} API Key`,
       placeholder: 'sk-...',
     });
-    
+
     if (p.isCancel(providerKey)) { p.cancel('Setup cancelled'); process.exit(0); }
-    
+
     if (providerKey) {
       const spinner = p.spinner();
       spinner.start(`Connecting ${provider.displayName}...`);
-      
-      try {
-        if (!apiKey) {
-          spinner.stop('Missing Letta API key');
-          continue;
-        }
 
-        await upsertProvider(apiKey, {
+      try {
+        await upsertProvider(baseUrl, apiKey, {
           id: provider.id,
           name: provider.name,
           type: provider.providerType,
@@ -1054,37 +891,17 @@ async function stepProviders(config: OnboardConfig, env: Record<string, string>)
   }
 }
 
-async function stepModel(config: OnboardConfig, env: Record<string, string>): Promise<void> {
+async function stepModel(config: OnboardConfig, _env: Record<string, string>): Promise<void> {
   // Only for new agents
   if (config.agentChoice !== 'new') return;
-  
-  const { buildModelOptions, handleModelSelection, getBillingTier } = await import('./utils/model-selection.js');
-  
+
+  const { buildModelOptions, handleModelSelection } = await import('./utils/model-selection.js');
+
   const spinner = p.spinner();
-  
-  // Determine if Docker/custom server (not Letta API)
-  const isSelfHosted = isDockerAuthMethod(config.authMethod);
-  
-  // Fetch billing tier for Letta API users (if not already fetched)
-  let billingTier: string | null = config.billingTier || null;
-  if (!isSelfHosted && !billingTier) {
-    spinner.start('Checking account...');
-    const apiKey = config.apiKey || env.LETTA_API_KEY || process.env.LETTA_API_KEY;
-    billingTier = await getBillingTier(apiKey, isSelfHosted);
-    config.billingTier = billingTier ?? undefined;
-    spinner.stop(billingTier === 'free' ? 'Free plan' : `Plan: ${billingTier || 'unknown'}`);
-  }
-  
   spinner.start('Fetching models...');
-  const apiKey = config.apiKey || env.LETTA_API_KEY || process.env.LETTA_API_KEY;
-  const modelOptions = await buildModelOptions({ billingTier, isSelfHosted, apiKey });
+  const modelOptions = await buildModelOptions();
   spinner.stop('Models loaded');
-  
-  // Show appropriate message for free tier
-  if (billingTier === 'free') {
-    p.log.info('Free plan: GLM and MiniMax models are free. Other models require BYOK (Bring Your Own Key).');
-  }
-  
+
   let selectedModel: string | null = null;
   while (!selectedModel) {
     const modelChoice = await p.select({
@@ -1093,11 +910,11 @@ async function stepModel(config: OnboardConfig, env: Record<string, string>): Pr
       maxItems: 12,
     });
     if (p.isCancel(modelChoice)) { p.cancel('Setup cancelled'); process.exit(0); }
-    
+
     selectedModel = await handleModelSelection(modelChoice, p.text);
     // If null (e.g., header selected), loop again
   }
-  
+
   config.model = selectedModel;
 }
 
@@ -1580,11 +1397,10 @@ function showSummary(config: OnboardConfig): void {
 
   // Providers
   const providerNames: string[] = [];
-  if (config.chatgptConnected) providerNames.push('ChatGPT subscription');
   if (config.providers?.length) {
     for (const prov of config.providers) {
       const def = BYOK_PROVIDERS.find(b => b.id === prov.id);
-      if (def && !def.isOAuth) providerNames.push(def.displayName);
+      if (def) providerNames.push(def.displayName);
     }
   }
   if (providerNames.length > 0) {
@@ -1739,18 +1555,7 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
     }
     
     console.log('');
-    
-    // Validate required fields
-    if (!config.apiKey && isLettaApiUrl(config.baseUrl)) {
-      console.error('❌ Error: LETTA_API_KEY is required');
-      console.error('   Get your API key from: https://app.letta.com/projects/default-project/api-keys');
-      console.error('   Then run: export LETTA_API_KEY="letta_..."');
-      console.error('');
-      console.error('   Or use a Docker server:');
-      console.error('   export LETTA_BASE_URL="http://localhost:8283"');
-      process.exit(1);
-    }
-    
+
     // Validate at least one channel is enabled
     const hasChannel = config.telegram.enabled || config.slack.enabled || config.discord.enabled || config.whatsapp.enabled || config.signal.enabled;
     if (!hasChannel) {
@@ -1805,9 +1610,8 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   }
   
   // Pre-populate from existing config
-  const baseUrl = existingConfig.server.baseUrl || process.env.LETTA_BASE_URL || 'https://api.letta.com';
-  const isLocal = !isLettaApiUrl(baseUrl);
-  p.note(`${baseUrl}\n${isLocal ? 'Docker server' : 'Letta API'}`, 'Server');
+  const baseUrl = existingConfig.server.baseUrl || process.env.LETTA_BASE_URL || 'http://localhost:8283';
+  p.note(baseUrl, 'Server');
   
   // Test server connection
   const spinner = p.spinner();
@@ -1900,18 +1704,7 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   // Run through all steps
   await stepAuth(config, env);
   await stepAgent(config, env);
-  
-  // Fetch billing tier for free plan detection (only for Letta API)
-  if (!isDockerAuthMethod(config.authMethod) && config.agentChoice === 'new') {
-    const { getBillingTier } = await import('./utils/model-selection.js');
-    const spinner = p.spinner();
-    spinner.start('Checking account...');
-    const apiKey = config.apiKey || env.LETTA_API_KEY || process.env.LETTA_API_KEY;
-    const billingTier = await getBillingTier(apiKey, false);
-    config.billingTier = billingTier ?? undefined;
-    spinner.stop(billingTier === 'free' ? 'Free plan' : `Plan: ${billingTier || 'Pro'}`);
-  }
-  
+
   await stepProviders(config, env);
   await stepModel(config, env);
   await stepChannels(config, env);
@@ -2010,8 +1803,8 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   
   const yamlConfig: Partial<LettaBotConfig> & Pick<LettaBotConfig, 'server'> = {
     server: {
-      mode: isDockerAuthMethod(config.authMethod) ? 'docker' : 'api',
-      ...(isDockerAuthMethod(config.authMethod) && config.baseUrl ? { baseUrl: config.baseUrl } : {}),
+      mode: 'docker',
+      ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
       ...(config.apiKey ? { apiKey: config.apiKey } : {}),
       // Preserve API server config (port, host, CORS)
       ...(existingApiConfig ? { api: existingApiConfig } : {}),

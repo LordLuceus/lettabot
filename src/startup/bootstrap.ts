@@ -1,7 +1,4 @@
 import { existsSync, readFileSync, promises as fs } from 'node:fs';
-import { hasRefreshToken, isTokenExpired, getDeviceName, loadTokens, saveTokens } from '../auth/tokens.js';
-import { refreshAccessToken } from '../auth/oauth.js';
-import { isLettaApiUrl } from '../utils/server.js';
 import { sleep } from '../utils/time.js';
 import { createLogger } from '../logger.js';
 
@@ -64,56 +61,6 @@ export function loadStoredAgentId(storePath: string, currentBaseUrl: string): vo
     );
   } catch {
     // Best-effort load; ignore malformed store files.
-  }
-}
-
-/**
- * Refresh OAuth tokens (if needed) before loading SDK modules that read LETTA_API_KEY.
- */
-export async function refreshTokensIfNeeded(): Promise<void> {
-  // Explicit API key always wins.
-  if (process.env.LETTA_API_KEY) {
-    return;
-  }
-
-  // OAuth only applies to Letta API endpoints.
-  if (!isLettaApiUrl(process.env.LETTA_BASE_URL)) {
-    return;
-  }
-
-  const tokens = loadTokens();
-  if (!tokens?.accessToken) {
-    return;
-  }
-
-  process.env.LETTA_API_KEY = tokens.accessToken;
-
-  if (!isTokenExpired(tokens) || !hasRefreshToken(tokens)) {
-    return;
-  }
-
-  try {
-    log.info('Refreshing access token...');
-    const newTokens = await refreshAccessToken(
-      tokens.refreshToken!,
-      tokens.deviceId,
-      getDeviceName(),
-    );
-
-    const now = Date.now();
-    saveTokens({
-      accessToken: newTokens.access_token,
-      refreshToken: newTokens.refresh_token ?? tokens.refreshToken,
-      tokenExpiresAt: now + newTokens.expires_in * 1000,
-      deviceId: tokens.deviceId,
-      deviceName: tokens.deviceName,
-    });
-
-    process.env.LETTA_API_KEY = newTokens.access_token;
-    log.info('Token refreshed successfully');
-  } catch (err) {
-    log.error('Failed to refresh token:', err instanceof Error ? err.message : err);
-    log.error('You may need to re-authenticate with `lettabot onboard`');
   }
 }
 
