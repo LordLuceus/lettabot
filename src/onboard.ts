@@ -6,7 +6,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import * as p from '@clack/prompts';
-import { saveConfig, syncProviders, upsertProvider, isApiServerMode } from './config/index.js';
+import { saveConfig, syncProviders, upsertProvider } from './config/index.js';
 import type { AgentConfig, LettaBotConfig } from './config/types.js';
 import { parseCsvList, parseOptionalInt } from './utils/parse.js';
 import { CHANNELS, getChannelHint, isSignalCliInstalled, setupTelegram, setupSlack, setupDiscord, setupWhatsApp, setupSignal } from './channels/setup.js';
@@ -135,7 +135,6 @@ async function saveConfigFromEnv(config: any, configPath: string, existingConfig
   
   const lettabotConfig: Partial<LettaBotConfig> & Pick<LettaBotConfig, 'server'> = {
     server: {
-      mode: 'docker',
       baseUrl: config.baseUrl,
       apiKey: config.apiKey,
       ...(existingApiConfig ? { api: existingApiConfig } : {}),
@@ -1803,7 +1802,6 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   
   const yamlConfig: Partial<LettaBotConfig> & Pick<LettaBotConfig, 'server'> = {
     server: {
-      mode: 'docker',
       ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
       ...(config.apiKey ? { apiKey: config.apiKey } : {}),
       // Preserve API server config (port, host, CORS)
@@ -1834,10 +1832,10 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   saveConfig(yamlConfig, savePath);
   p.log.success('Configuration saved to lettabot.yaml');
   
-  // Sync BYOK providers to Letta API.
-  if (yamlConfig.providers && yamlConfig.providers.length > 0 && isApiServerMode(yamlConfig.server.mode)) {
+  // Sync BYOK providers to the configured Letta server.
+  if (yamlConfig.providers && yamlConfig.providers.length > 0 && yamlConfig.server.apiKey) {
     const spinner = p.spinner();
-    spinner.start('Syncing BYOK providers to Letta API...');
+    spinner.start('Syncing BYOK providers...');
     try {
       await syncProviders(yamlConfig);
       spinner.stop('BYOK providers synced');

@@ -3,18 +3,18 @@ import { deepMergeConfig } from './mutations.js';
 
 describe('deepMergeConfig', () => {
   it('merges top-level scalar changes', () => {
-    const target = { server: { mode: 'docker', baseUrl: 'http://old' } };
+    const target = { server: { baseUrl: 'http://old', apiKey: 'sk-old' } };
     const source = { server: { baseUrl: 'http://new' } };
     const result = deepMergeConfig(target, source);
-    expect(result.server.mode).toBe('docker');
+    expect(result.server.apiKey).toBe('sk-old');
     expect(result.server.baseUrl).toBe('http://new');
   });
 
   it('removes keys set to null', () => {
-    const target = { server: { mode: 'docker', logLevel: 'debug' } };
+    const target = { server: { baseUrl: 'http://localhost:8283', logLevel: 'debug' } };
     const source = { server: { logLevel: null } };
     const result = deepMergeConfig(target, source);
-    expect(result.server.mode).toBe('docker');
+    expect(result.server.baseUrl).toBe('http://localhost:8283');
     expect(result.server.logLevel).toBeUndefined();
   });
 

@@ -115,7 +115,7 @@ describe('saveConfig with agents[] format', () => {
 
   it('should write agents[] config without legacy agent/channels at top level', () => {
     const config = {
-      server: { mode: 'cloud' as const, apiKey: 'test-key' },
+      server: { apiKey: 'test-key' },
       agents: [{
         name: 'TestBot',
         id: 'agent-abc123',
@@ -147,7 +147,7 @@ describe('saveConfig with agents[] format', () => {
 
   it('should roundtrip agents[] config through save and loadConfig+normalizeAgents', () => {
     const config = {
-      server: { mode: 'cloud' as const, apiKey: 'test-key' },
+      server: { apiKey: 'test-key' },
       agents: [{
         name: 'MyBot',
         id: 'agent-xyz',
@@ -173,7 +173,7 @@ describe('saveConfig with agents[] format', () => {
     const raw = readFileSync(configPath, 'utf-8');
     const parsed = YAML.parse(raw) as Partial<LettaBotConfig>;
     const loaded: LettaBotConfig = {
-      server: { mode: 'cloud', ...parsed.server },
+      server: { ...parsed.server },
       agent: { name: 'LettaBot', ...parsed.agent },
       channels: { ...parsed.channels },
       ...parsed,
@@ -198,7 +198,7 @@ describe('saveConfig with agents[] format', () => {
     // After onboarding, agent ID should always be present in the config.
     // This test documents the contract: new configs have the ID eagerly set.
     const config = {
-      server: { mode: 'cloud' as const, apiKey: 'test-key' },
+      server: { apiKey: 'test-key' },
       agents: [{
         name: 'LettaBot',
         id: 'agent-eagerly-created',
@@ -219,7 +219,7 @@ describe('saveConfig with agents[] format', () => {
 
   it('should preserve providers at top level, not inside agents', () => {
     const config = {
-      server: { mode: 'cloud' as const, apiKey: 'test-key' },
+      server: { apiKey: 'test-key' },
       agents: [{
         name: 'TestBot',
         channels: {},
@@ -249,8 +249,7 @@ describe('server.api config (canonical location)', () => {
     const config: LettaBotConfig = {
       ...DEFAULT_CONFIG,
       server: {
-        mode: 'selfhosted',
-        baseUrl: 'http://localhost:6701',
+                baseUrl: 'http://localhost:6701',
         api: { port: 6702, host: '0.0.0.0', corsOrigin: '*' },
       },
     };
@@ -288,7 +287,7 @@ describe('server.api config (canonical location)', () => {
   it('configToEnv should fall back to top-level api (deprecated)', () => {
     const config: LettaBotConfig = {
       ...DEFAULT_CONFIG,
-      server: { mode: 'selfhosted', baseUrl: 'http://localhost:6701' },
+      server: { baseUrl: 'http://localhost:6701' },
       api: { port: 8081 },
     };
 
@@ -301,8 +300,7 @@ describe('server.api config (canonical location)', () => {
     const config: LettaBotConfig = {
       ...DEFAULT_CONFIG,
       server: {
-        mode: 'selfhosted',
-        baseUrl: 'http://localhost:6701',
+                baseUrl: 'http://localhost:6701',
         api: { port: 9090 },
       },
       api: { port: 8081 },
@@ -316,7 +314,7 @@ describe('server.api config (canonical location)', () => {
   it('should not set PORT when no api config is present', () => {
     const config: LettaBotConfig = {
       ...DEFAULT_CONFIG,
-      server: { mode: 'selfhosted', baseUrl: 'http://localhost:6701' },
+      server: { baseUrl: 'http://localhost:6701' },
     };
 
     const env = configToEnv(config);
@@ -331,8 +329,7 @@ describe('server.api config (canonical location)', () => {
     try {
       const config = {
         server: {
-          mode: 'selfhosted' as const,
-          baseUrl: 'http://localhost:6701',
+                    baseUrl: 'http://localhost:6701',
           api: { port: 6702, host: '0.0.0.0' },
         },
         agents: [{
@@ -397,7 +394,7 @@ describe('didLoadFail', () => {
 
       expect(didLoadFail()).toBe(true);
       // Should return default config on failure
-      expect(config.server.mode).toBe(DEFAULT_CONFIG.server.mode);
+      expect(config.server.baseUrl).toBe(DEFAULT_CONFIG.server.baseUrl);
 
       errorSpy.mockRestore();
       warnSpy.mockRestore();
@@ -562,7 +559,7 @@ describe('loadConfig with fleet config', () => {
           llm_config: { model: 'gpt-4', context_window: 128000 },
           system_prompt: { value: 'You are helpful' },
           lettabot: {
-            server: { mode: 'docker', baseUrl: 'http://localhost:8283' },
+            server: { baseUrl: 'http://localhost:8283' },
             displayName: 'Testy',
             channels: {
               telegram: { enabled: true, token: 'tg-fleet-token', dmPolicy: 'open' },
@@ -581,7 +578,6 @@ describe('loadConfig with fleet config', () => {
 
     expect(config.agent.name).toBe('TestBot');
     expect(config.agent.displayName).toBe('Testy');
-    expect(config.server.mode).toBe('docker');
     expect(config.server.baseUrl).toBe('http://localhost:8283');
     expect(config.channels.telegram?.token).toBe('tg-fleet-token');
     expect(config.features?.cron).toBe(true);
@@ -621,7 +617,7 @@ describe('loadConfig with fleet config', () => {
     writeFileSync(
       nativePath,
       YAML.stringify({
-        server: { mode: 'api' },
+        server: {},
         agent: { name: 'NativeWins' },
         channels: {},
       }),
@@ -739,7 +735,7 @@ describe('loadConfig with fleet config', () => {
             llm_config: { model: 'gpt-4' },
             system_prompt: { value: 'First' },
             lettabot: {
-              server: { mode: 'docker', baseUrl: 'http://localhost:8283' },
+              server: { baseUrl: 'http://localhost:8283' },
               channels: { telegram: { enabled: true, token: 'tg1' } },
             },
           },
@@ -762,7 +758,6 @@ describe('loadConfig with fleet config', () => {
     expect(config.agents).toHaveLength(2);
     expect(config.agents![0].name).toBe('Agent1');
     expect(config.agents![1].name).toBe('Agent2');
-    expect(config.server.mode).toBe('docker');
     expect(wasLoadedFromFleetConfig()).toBe(true);
   });
 });

@@ -20,8 +20,6 @@ import {
   resolveConfigPath,
   configSourceLabel,
   hasInlineConfig,
-  isDockerServerMode,
-  serverModeLabel,
   wasLoadedFromFleetConfig,
 } from './config/index.js';
 import { resolveSessionMemfs } from './config/memfs.js';
@@ -34,10 +32,11 @@ const log = createLogger('Config');
 
 const yamlConfig = loadAppConfigOrExit();
 log.info(`Loaded from ${configSourceLabel()}`);
+const serverLabel = yamlConfig.server.baseUrl || process.env.LETTA_BASE_URL || 'http://localhost:8283';
 if (yamlConfig.agents?.length) {
-  log.info(`Mode: ${serverModeLabel(yamlConfig.server.mode)}, Agents: ${yamlConfig.agents.map(a => a.name).join(', ')}`);
+  log.info(`Server: ${serverLabel}, Agents: ${yamlConfig.agents.map(a => a.name).join(', ')}`);
 } else {
-  log.info(`Mode: ${serverModeLabel(yamlConfig.server.mode)}, Agent: ${yamlConfig.agent.name}`);
+  log.info(`Server: ${serverLabel}, Agent: ${yamlConfig.agent.name}`);
 }
 if (yamlConfig.agent?.model) {
   log.warn('WARNING: agent.model in lettabot.yaml is deprecated and ignored. Use `lettabot model set <handle>` instead.');
@@ -249,13 +248,8 @@ const globalConfig = {
   heartbeatInterruptOnUserMessage: parseOptionalBoolean(process.env.HEARTBEAT_INTERRUPT_ON_USER_MESSAGE),
 };
 
-// Validate LETTA_API_KEY is set for API mode (docker mode doesn't require it)
-if (!isDockerServerMode(yamlConfig.server.mode) && !process.env.LETTA_API_KEY) {
-  log.error('LETTA_API_KEY is required for Letta API.');
-  log.error('  Get your API key from https://app.letta.com/projects/default-project/api-keys and set it as an environment variable.');
-  log.error('Or use docker mode: run "lettabot onboard" and select "Enter Docker server URL".');
-  process.exit(1);
-}
+// A LETTA_API_KEY is only required if the configured Letta server has auth
+// enabled. Self-hosted servers on localhost typically don't.
 
 async function main() {
   log.info('Starting LettaBot...');
@@ -344,7 +338,6 @@ async function main() {
     const resolvedMemfsResult = resolveSessionMemfs({
       configuredMemfs: agentConfig.features?.memfs,
       envMemfs: process.env.LETTABOT_MEMFS,
-      serverMode: yamlConfig.server.mode,
     });
     const resolvedMemfs = resolvedMemfsResult.value;
     const configuredSleeptime = agentConfig.features?.sleeptime;

@@ -1,12 +1,10 @@
 import * as p from '@clack/prompts';
 import {
-  isApiServerMode,
   loadAppConfigOrExit,
   resolveConfigPath,
   saveConfig,
-  serverModeLabel,
 } from '../config/index.js';
-import type { AgentConfig, LettaBotConfig, ServerMode } from '../config/types.js';
+import type { AgentConfig, LettaBotConfig } from '../config/types.js';
 import {
   CHANNELS,
   getChannelHint,
@@ -14,11 +12,8 @@ import {
   type ChannelId,
 } from '../channels/setup.js';
 
-type CoreServerMode = 'api' | 'docker';
-
 export interface CoreConfigDraft {
   server: {
-    mode: CoreServerMode;
     baseUrl?: string;
     apiKey?: string;
   };
@@ -42,10 +37,6 @@ class InterceptedExit extends Error {
 
 function deepClone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function normalizeServerMode(mode?: ServerMode): CoreServerMode {
-  return isApiServerMode(mode) ? 'api' : 'docker';
 }
 
 function getPrimaryAgent(config: LettaBotConfig): AgentConfig | null {
@@ -86,7 +77,6 @@ export function extractCoreDraft(config: LettaBotConfig): CoreConfigDraft {
 
   return {
     server: {
-      mode: normalizeServerMode(config.server.mode),
       baseUrl: config.server.baseUrl,
       apiKey: config.server.apiKey,
     },
@@ -105,7 +95,6 @@ export function applyCoreDraft(baseConfig: LettaBotConfig, draft: CoreConfigDraf
 
   next.server = {
     ...next.server,
-    mode: draft.server.mode,
     baseUrl: draft.server.baseUrl,
     apiKey: draft.server.apiKey,
   };
@@ -158,8 +147,8 @@ function getEnabledChannelIds(channels: AgentConfig['channels']): ChannelId[] {
 export function getCoreDraftWarnings(draft: CoreConfigDraft): string[] {
   const warnings: string[] = [];
 
-  if (draft.server.mode === 'api' && !draft.server.apiKey?.trim()) {
-    warnings.push('Server mode is api, but API key is empty.');
+  if (!draft.server.baseUrl?.trim()) {
+    warnings.push('Server URL is empty — will default to http://localhost:8283.');
   }
 
   if (getEnabledChannelIds(draft.channels).length === 0) {
@@ -178,9 +167,8 @@ function formatChannelsSummary(draft: CoreConfigDraft): string {
 export function formatCoreDraftSummary(draft: CoreConfigDraft, configPath: string): string {
   const rows: Array<[string, string]> = [
     ['Config Path', configPath],
-    ['Server Mode', serverModeLabel(draft.server.mode)],
+    ['Server URL', draft.server.baseUrl || 'http://localhost:8283'],
     ['API Key', draft.server.apiKey ? '✓ Set' : '✗ Not set'],
-    ['Docker Base URL', draft.server.baseUrl || '(unset)'],
     ['Agent Name', draft.agent.name],
     ['Agent ID', draft.agent.id || '(new/auto)'],
     ['Enabled Channels', formatChannelsSummary(draft)],
@@ -202,41 +190,27 @@ function hasDraftChanged(initial: CoreConfigDraft, current: CoreConfigDraft): bo
 }
 
 async function editServerAuth(draft: CoreConfigDraft): Promise<void> {
-  const mode = await p.select({
-    message: 'Select server mode',
-    options: [
-      { value: 'api', label: 'API', hint: 'Use Letta API key authentication' },
-      { value: 'docker', label: 'Docker/Self-hosted', hint: 'Use local/self-hosted base URL' },
-    ],
-    initialValue: draft.server.mode,
+  const baseUrl = await p.text({
+    message: 'Letta server URL',
+    placeholder: 'http://localhost:8283',
+    initialValue: draft.server.baseUrl ?? 'http://localhost:8283',
+    validate: (value) => {
+      const trimmed = value.trim();
+      if (!trimmed) return undefined; // empty -> use default
+      if (!/^https?:\/\//.test(trimmed)) return 'URL must start with http:// or https://';
+      return undefined;
+    },
   });
+  if (p.isCancel(baseUrl)) return;
+  draft.server.baseUrl = baseUrl.trim() || undefined;
 
-  if (p.isCancel(mode)) return;
-  draft.server.mode = mode as CoreServerMode;
-
-  if (draft.server.mode === 'api') {
-    const apiKey = await p.text({
-      message: 'API key (blank to unset)',
-      placeholder: 'sk-...',
-      initialValue: draft.server.apiKey ?? '',
-    });
-    if (p.isCancel(apiKey)) return;
-    draft.server.apiKey = apiKey.trim() || undefined;
-  } else {
-    const baseUrl = await p.text({
-      message: 'Base URL',
-      placeholder: 'http://localhost:8283',
-      initialValue: draft.server.baseUrl ?? 'http://localhost:8283',
-      validate: (value) => {
-        const trimmed = value.trim();
-        if (!trimmed) return 'Base URL is required in docker mode';
-        if (!/^https?:\/\//.test(trimmed)) return 'Base URL must start with http:// or https://';
-        return undefined;
-      },
-    });
-    if (p.isCancel(baseUrl)) return;
-    draft.server.baseUrl = baseUrl.trim();
-  }
+  const apiKey = await p.text({
+    message: 'API key (blank to unset)',
+    placeholder: 'Leave empty if server has no auth',
+    initialValue: draft.server.apiKey ?? '',
+  });
+  if (p.isCancel(apiKey)) return;
+  draft.server.apiKey = apiKey.trim() || undefined;
 }
 
 async function editAgent(draft: CoreConfigDraft): Promise<void> {
@@ -456,7 +430,7 @@ export async function configTui(): Promise<void> {
         {
           value: 'server',
           label: 'Server/Auth',
-          hint: `${serverModeLabel(draft.server.mode)}${draft.server.mode === 'api' ? '' : ` • ${draft.server.baseUrl || 'unset'}`}`,
+          hint: `${draft.server.baseUrl || 'http://localhost:8283'}${draft.server.apiKey ? ' • API key set' : ''}`,
         },
         {
           value: 'agent',

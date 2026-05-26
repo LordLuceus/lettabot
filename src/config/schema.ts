@@ -161,9 +161,8 @@ export const CONFIG_SCHEMA = {
   global: [
     {
       id: 'server', label: 'Server', fields: [
-        { key: 'server.mode', type: 'enum' as FieldType, label: 'Mode', options: ['api', 'docker'], default: 'api', description: 'api = Letta Cloud, docker = self-hosted', restartRequired: true },
-        { key: 'server.baseUrl', type: 'string' as FieldType, label: 'Base URL', description: 'Letta server URL (docker mode only)', restartRequired: true },
-        { key: 'server.apiKey', type: 'secret' as FieldType, label: 'API Key', description: 'Letta API key', restartRequired: true },
+        { key: 'server.baseUrl', type: 'string' as FieldType, label: 'Server URL', description: 'Letta server URL (default: http://localhost:8283)', restartRequired: true },
+        { key: 'server.apiKey', type: 'secret' as FieldType, label: 'API Key', description: 'Optional API key (only required if your Letta server has auth enabled)', restartRequired: true },
         { key: 'server.logLevel', type: 'enum' as FieldType, label: 'Log Level', options: ['fatal', 'error', 'warn', 'info', 'debug', 'trace'], default: 'info' },
         { key: 'server.api.port', type: 'number' as FieldType, label: 'API Port', default: 8080, restartRequired: true },
         { key: 'server.api.host', type: 'string' as FieldType, label: 'API Host', default: '127.0.0.1', restartRequired: true },

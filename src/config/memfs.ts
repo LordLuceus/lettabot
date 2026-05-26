@@ -1,15 +1,12 @@
-import { isDockerServerMode, type ServerMode } from './types.js';
-
-export type ResolvedMemfsSource = 'config' | 'env' | 'default-docker' | 'unset';
+export type ResolvedMemfsSource = 'config' | 'env' | 'default-self-hosted';
 
 export interface ResolveSessionMemfsInput {
   configuredMemfs?: boolean;
   envMemfs?: string;
-  serverMode?: ServerMode;
 }
 
 export interface ResolveSessionMemfsResult {
-  value: boolean | undefined;
+  value: boolean;
   source: ResolvedMemfsSource;
 }
 
@@ -25,8 +22,7 @@ function parseBooleanEnv(value?: string): boolean | undefined {
  * Precedence:
  * 1) Per-agent config (`features.memfs`)
  * 2) `LETTABOT_MEMFS` env var (`true`/`false`)
- * 3) Default `false` in docker/self-hosted mode (safety)
- * 4) `undefined` in API mode (leave agent memfs unchanged)
+ * 3) Default `false` (safety: self-hosted servers may not have memfs support)
  */
 export function resolveSessionMemfs(input: ResolveSessionMemfsInput): ResolveSessionMemfsResult {
   // Runtime config parsing can surface non-boolean values (e.g. YAML `memfs:` -> null).
@@ -40,9 +36,5 @@ export function resolveSessionMemfs(input: ResolveSessionMemfsInput): ResolveSes
     return { value: envMemfs, source: 'env' };
   }
 
-  if (isDockerServerMode(input.serverMode)) {
-    return { value: false, source: 'default-docker' };
-  }
-
-  return { value: undefined, source: 'unset' };
+  return { value: false, source: 'default-self-hosted' };
 }

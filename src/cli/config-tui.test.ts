@@ -11,8 +11,7 @@ import type { LettaBotConfig } from '../config/types.js';
 function makeBaseConfig(): LettaBotConfig {
   return {
     server: {
-      mode: 'api',
-      apiKey: 'sk-base',
+            apiKey: 'sk-base',
     },
     agent: {
       name: 'Legacy Agent',
@@ -111,11 +110,9 @@ describe('config TUI helpers', () => {
     draft.agent.id = 'agent-1b';
     draft.channels.telegram = { enabled: false };
     draft.features.cron = true;
-    draft.server.mode = 'docker';
     draft.server.baseUrl = 'http://localhost:8283';
 
     const updated = applyCoreDraft(config, draft);
-    expect(updated.server.mode).toBe('docker');
     expect(updated.server.baseUrl).toBe('http://localhost:8283');
     expect(updated.agents?.[0].name).toBe('Updated Primary');
     expect(updated.agents?.[0].id).toBe('agent-1b');
@@ -183,9 +180,9 @@ describe('config TUI helpers', () => {
     expect(updated.agents?.[0].features?.heartbeat?.interruptOnUserMessage).toBe(false);
   });
 
-  it('getCoreDraftWarnings flags missing API key and no enabled channels', () => {
+  it('getCoreDraftWarnings flags missing server URL and no enabled channels', () => {
     const draft: CoreConfigDraft = {
-      server: { mode: 'api', apiKey: undefined, baseUrl: undefined },
+      server: { apiKey: undefined, baseUrl: undefined },
       agent: { name: 'A' },
       channels: {
         telegram: { enabled: false },
@@ -198,7 +195,7 @@ describe('config TUI helpers', () => {
     };
 
     const warnings = getCoreDraftWarnings(draft);
-    expect(warnings).toContain('Server mode is api, but API key is empty.');
+    expect(warnings).toContain('Server URL is empty — will default to http://localhost:8283.');
     expect(warnings).toContain('No channels are enabled.');
   });
 
@@ -206,7 +203,7 @@ describe('config TUI helpers', () => {
     const draft = extractCoreDraft(makeBaseConfig());
     const summary = formatCoreDraftSummary(draft, '/tmp/lettabot.yaml');
     expect(summary).toContain('Config Path:');
-    expect(summary).toContain('Server Mode:');
+    expect(summary).toContain('Server URL:');
     expect(summary).toContain('Agent Name:');
     expect(summary).toContain('Enabled Channels:');
     expect(summary).toContain('/tmp/lettabot.yaml');

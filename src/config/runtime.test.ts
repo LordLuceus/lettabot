@@ -26,14 +26,14 @@ describe('loadAppConfigOrExit', () => {
     const configPath = join(tmpDir, 'lettabot.yaml');
 
     try {
-      writeFileSync(configPath, 'server:\n  mode: api\n', 'utf-8');
+      writeFileSync(configPath, 'server:\n  baseUrl: http://localhost:8283\n', 'utf-8');
       process.env.LETTABOT_CONFIG = configPath;
 
       const config = loadAppConfigOrExit(((code: number): never => {
         throw new Error(`unexpected-exit:${code}`);
       }));
 
-      expect(config.server.mode).toBe('api');
+      expect(config.server.baseUrl).toBe('http://localhost:8283');
       expect(didLoadFail()).toBe(false);
     } finally {
       process.env.LETTABOT_CONFIG = originalEnv;

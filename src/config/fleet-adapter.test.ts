@@ -50,7 +50,7 @@ describe('isFleetConfig', () => {
   it('returns false for native LettaBot single-agent config', () => {
     expect(
       isFleetConfig({
-        server: { mode: 'api' },
+        server: {},
         agent: { name: 'Bot' },
         channels: { telegram: { enabled: true, token: 'abc' } },
       }),
@@ -60,7 +60,7 @@ describe('isFleetConfig', () => {
   it('returns false for native LettaBot multi-agent config', () => {
     expect(
       isFleetConfig({
-        server: { mode: 'api' },
+        server: {},
         agents: [
           { name: 'Bot1', channels: { telegram: { enabled: true } } },
         ],
@@ -116,7 +116,7 @@ describe('fleetConfigToLettaBotConfig (single agent)', () => {
           system_prompt: { value: 'You are helpful' },
           tools: ['web_search'],
           lettabot: {
-            server: { mode: 'docker', baseUrl: 'http://localhost:8283' },
+            server: { baseUrl: 'http://localhost:8283' },
             displayName: 'Bot',
             channels: {
               telegram: { enabled: true, token: 'tg-token', dmPolicy: 'open' },
@@ -131,7 +131,6 @@ describe('fleetConfigToLettaBotConfig (single agent)', () => {
 
     expect(result.agent.name).toBe('MyBot');
     expect(result.agent.displayName).toBe('Bot');
-    expect(result.server.mode).toBe('docker');
     expect(result.server.baseUrl).toBe('http://localhost:8283');
     expect(result.channels.telegram?.token).toBe('tg-token');
     expect(result.channels.telegram?.dmPolicy).toBe('open');
@@ -150,7 +149,7 @@ describe('fleetConfigToLettaBotConfig (single agent)', () => {
           name: 'FullBot',
           llm_config: { model: 'gpt-4' },
           lettabot: {
-            server: { mode: 'api', apiKey: 'sk-test', logLevel: 'debug' },
+            server: { apiKey: 'sk-test', logLevel: 'debug' },
             displayName: 'Full',
             conversations: { mode: 'per-channel', heartbeat: 'dedicated' },
             channels: {
@@ -264,7 +263,7 @@ describe('fleetConfigToLettaBotConfig (single agent)', () => {
           name: 'MinimalBot',
           llm_config: { model: 'gpt-4' },
           lettabot: {
-            server: { mode: 'docker', baseUrl: 'http://localhost:8283' },
+            server: { baseUrl: 'http://localhost:8283' },
           },
         },
       ],
@@ -287,7 +286,7 @@ describe('fleetConfigToLettaBotConfig (multi-agent)', () => {
           name: 'Bot1',
           llm_config: { model: 'gpt-4' },
           lettabot: {
-            server: { mode: 'docker', baseUrl: 'http://localhost:8283' },
+            server: { baseUrl: 'http://localhost:8283' },
             displayName: 'First',
             channels: { telegram: { enabled: true, token: 'tg1' } },
             providers: [{ id: 'oai', name: 'openai', type: 'openai', apiKey: 'sk-1' }],
@@ -324,7 +323,6 @@ describe('fleetConfigToLettaBotConfig (multi-agent)', () => {
     expect(result.agents![0].security?.redaction?.secrets).toBe(true);
 
     // System-wide fields promoted from first agent
-    expect(result.server.mode).toBe('docker');
     expect(result.server.baseUrl).toBe('http://localhost:8283');
     expect(result.providers).toHaveLength(1);
     expect(result.transcription?.provider).toBe('openai');

@@ -1,33 +1,15 @@
 /**
  * LettaBot Configuration Types
- * 
- * Two modes:
- * 1. Docker server: Uses baseUrl (e.g., http://localhost:8283), no API key
- * 2. Letta API: Uses apiKey, optional BYOK providers
+ *
+ * Lettabot connects to a self-hosted Letta server at the configured baseUrl
+ * (default http://localhost:8283), with an optional apiKey if the server
+ * requires auth.
  */
 
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Config');
-export type ServerMode = 'api' | 'docker' | 'cloud' | 'selfhosted';
-export type CanonicalServerMode = 'api' | 'docker';
 export type HeartbeatSkipRecentPolicy = 'fixed' | 'fraction' | 'off';
-
-export function canonicalizeServerMode(mode?: ServerMode): CanonicalServerMode {
-  return mode === 'docker' || mode === 'selfhosted' ? 'docker' : 'api';
-}
-
-export function isDockerServerMode(mode?: ServerMode): boolean {
-  return canonicalizeServerMode(mode) === 'docker';
-}
-
-export function isApiServerMode(mode?: ServerMode): boolean {
-  return canonicalizeServerMode(mode) === 'api';
-}
-
-export function serverModeLabel(mode?: ServerMode): string {
-  return canonicalizeServerMode(mode);
-}
 
 /**
  * Display configuration for tool calls and reasoning in channel output.
@@ -134,12 +116,9 @@ export interface AgentConfig {
 export interface LettaBotConfig {
   // Server connection
   server: {
-    // Canonical values: 'api' or 'docker'
-    // Legacy aliases accepted for compatibility: 'cloud', 'selfhosted'
-    mode: ServerMode;
-    // Only for docker mode
+    // Letta server URL (default: http://localhost:8283)
     baseUrl?: string;
-    // Only for api mode
+    // API key, only required if the server has auth enabled
     apiKey?: string;
     // Log level (fatal|error|warn|info|debug|trace). Env vars LOG_LEVEL / LETTABOT_LOG_LEVEL override.
     logLevel?: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace';
@@ -480,7 +459,7 @@ export interface GoogleConfig {
 // Default config
 export const DEFAULT_CONFIG: LettaBotConfig = {
   server: {
-    mode: 'api',
+    baseUrl: 'http://localhost:8283',
   },
   agent: {
     name: 'LettaBot',

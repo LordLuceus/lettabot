@@ -109,7 +109,6 @@ export function deepMergeConfig(target: Record<string, any>, source: Record<stri
 
 /** Check if structural fields changed (requiring restart). */
 export function needsRestart(prev: LettaBotConfig, next: LettaBotConfig): boolean {
-  if (prev.server.mode !== next.server.mode) return true;
   if (prev.server.baseUrl !== next.server.baseUrl) return true;
   if (prev.server.apiKey !== next.server.apiKey) return true;
   if (JSON.stringify(prev.channels) !== JSON.stringify(next.channels)) return true;

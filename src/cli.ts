@@ -10,7 +10,7 @@
 
 // Config loaded from lettabot.yaml (lazily, so debug/help commands can run with broken config)
 import type { LettaBotConfig } from './config/index.js';
-import { loadAppConfigOrExit, applyConfigToEnv, serverModeLabel } from './config/index.js';
+import { loadAppConfigOrExit, applyConfigToEnv } from './config/index.js';
 let cachedConfig: LettaBotConfig | null = null;
 
 function getConfig(): LettaBotConfig {
@@ -59,7 +59,7 @@ async function configure() {
 
   // Show current config from YAML
   const configRows = [
-    ['Server Mode', serverModeLabel(config.server.mode)],
+    ['Server URL', config.server.baseUrl || 'http://localhost:8283'],
     ['API Key', config.server.apiKey ? '✓ Set' : '✗ Not set'],
     ['Agent Name', config.agent.name],
     ['Telegram', config.channels.telegram?.enabled ? '✓ Enabled' : '✗ Disabled'],

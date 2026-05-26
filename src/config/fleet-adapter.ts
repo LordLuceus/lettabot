@@ -157,7 +157,7 @@ function buildSingleAgentConfig(agent: FleetAgent): LettaBotConfig {
   const lb = extractLettabotFields(agent.lettabot!);
 
   return {
-    server: { mode: 'api', ...lb.server },
+    server: { ...lb.server },
     agent: {
       name: agent.name!,
       displayName: lb.displayName,
@@ -194,7 +194,7 @@ function buildMultiAgentConfig(agents: FleetAgent[]): LettaBotConfig {
   });
 
   return {
-    server: { mode: 'api', ...firstLb.server },
+    server: { ...firstLb.server },
     agent: { name: 'LettaBot' },
     channels: {},
     agents: nativeAgents,

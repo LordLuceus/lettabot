@@ -15,9 +15,6 @@ vi.mock('../logger.js', () => ({
 
 import {
   normalizeAgents,
-  canonicalizeServerMode,
-  isApiServerMode,
-  isDockerServerMode,
   type LettaBotConfig,
   type AgentConfig,
 } from './types.js';
@@ -57,18 +54,9 @@ describe('normalizeAgents', () => {
     }
   });
 
-  it('canonicalizes legacy server mode aliases', () => {
-    expect(canonicalizeServerMode('cloud')).toBe('api');
-    expect(canonicalizeServerMode('api')).toBe('api');
-    expect(canonicalizeServerMode('selfhosted')).toBe('docker');
-    expect(canonicalizeServerMode('docker')).toBe('docker');
-    expect(isApiServerMode('cloud')).toBe(true);
-    expect(isDockerServerMode('selfhosted')).toBe(true);
-  });
-
   it('should normalize legacy single-agent config to one-entry array', () => {
     const config: LettaBotConfig = {
-      server: { mode: 'cloud' },
+      server: {},
       agent: {
         name: 'TestBot',
         model: 'anthropic/claude-sonnet-4',
@@ -91,7 +79,7 @@ describe('normalizeAgents', () => {
 
   it('should drop channels with enabled: false', () => {
     const config: LettaBotConfig = {
-      server: { mode: 'cloud' },
+      server: {},
       agent: { name: 'TestBot', model: 'test' },
       channels: {
         telegram: {
@@ -130,7 +118,7 @@ describe('normalizeAgents', () => {
     ];
 
     const config: LettaBotConfig = {
-      server: { mode: 'cloud' },
+      server: {},
       agents: agentsArray,
       // Legacy fields (ignored when agents[] is present)
       agent: { name: 'Unused', model: 'unused' },
@@ -148,7 +136,7 @@ describe('normalizeAgents', () => {
 
   it('should produce empty channels object when no channels configured', () => {
     const config: LettaBotConfig = {
-      server: { mode: 'cloud' },
+      server: {},
       agent: { name: 'TestBot', model: 'test' },
       channels: {},
     };
@@ -160,7 +148,7 @@ describe('normalizeAgents', () => {
 
   it('should default agent name to "LettaBot" when not provided', () => {
     const config: LettaBotConfig = {
-      server: { mode: 'cloud' },
+      server: {},
       agent: { name: '', model: '' }, // Empty name should fall back to 'LettaBot'
       channels: {},
     };
@@ -176,7 +164,7 @@ describe('normalizeAgents', () => {
 
   it('should fail fast when enabled channels are missing required credentials', () => {
     const config: LettaBotConfig = {
-      server: { mode: 'cloud' },
+      server: {},
       agent: { name: 'TestBot', model: 'test' },
       channels: {
         telegram: {
@@ -204,7 +192,7 @@ describe('normalizeAgents', () => {
 
   it('should fail fast when telegram-mtproto is missing required credentials', () => {
     const config: LettaBotConfig = {
-      server: { mode: 'cloud' },
+      server: {},
       agent: { name: 'TestBot', model: 'test' },
       channels: {
         'telegram-mtproto': {
@@ -220,7 +208,7 @@ describe('normalizeAgents', () => {
 
   it('should fail fast when telegram-mtproto apiId is not a positive integer', () => {
     const config: LettaBotConfig = {
-      server: { mode: 'cloud' },
+      server: {},
       agent: { name: 'TestBot', model: 'test' },
       channels: {
         'telegram-mtproto': {
@@ -237,7 +225,7 @@ describe('normalizeAgents', () => {
 
   it('should preserve agent id when provided', () => {
     const config: LettaBotConfig = {
-      server: { mode: 'cloud' },
+      server: {},
       agent: {
         id: 'agent-123',
         name: 'TestBot',
@@ -255,7 +243,7 @@ describe('normalizeAgents', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const config: LettaBotConfig = {
-      server: { mode: 'cloud' },
+      server: {},
       agent: { name: 'TestBot' },
       channels: {
         telegram: {
@@ -289,7 +277,7 @@ describe('normalizeAgents', () => {
 
   it('should preserve legacy listeningGroups semantics by adding wildcard open', () => {
     const config: LettaBotConfig = {
-      server: { mode: 'cloud' },
+      server: {},
       agent: { name: 'TestBot' },
       channels: {
         discord: {
@@ -313,7 +301,7 @@ describe('normalizeAgents', () => {
       process.env.DISCORD_BOT_TOKEN = 'env-discord-token';
 
       const config: LettaBotConfig = {
-        server: { mode: 'cloud' },
+        server: {},
         agent: { name: 'TestBot', model: 'test' },
         channels: {},
       };
@@ -328,7 +316,7 @@ describe('normalizeAgents', () => {
       process.env.TELEGRAM_BOT_TOKEN = 'env-token';
 
       const config: LettaBotConfig = {
-        server: { mode: 'cloud' },
+        server: {},
         agent: { name: 'TestBot', model: 'test' },
         channels: {
           telegram: { enabled: true, token: 'yaml-token' },
@@ -346,7 +334,7 @@ describe('normalizeAgents', () => {
       process.env.TELEGRAM_BOT_TOKEN = 'env-tg-token';
 
       const config: LettaBotConfig = {
-        server: { mode: 'cloud' },
+        server: {},
         agent: { name: 'TestBot', model: 'test' },
         channels: {
           signal: { enabled: true, selfChat: true, dmPolicy: 'pairing' },
@@ -371,7 +359,7 @@ describe('normalizeAgents', () => {
       process.env.TELEGRAM_BOT_TOKEN = 'env-tg-token';
 
       const config: LettaBotConfig = {
-        server: { mode: 'cloud' },
+        server: {},
         agent: { name: 'TestBot', model: 'test' },
         channels: {
           signal: { enabled: true, selfChat: true, dmPolicy: 'pairing' },
@@ -394,7 +382,7 @@ describe('normalizeAgents', () => {
       process.env.TELEGRAM_BOT_TOKEN = 'env-token';
 
       const config: LettaBotConfig = {
-        server: { mode: 'cloud' },
+        server: {},
         agents: [{ name: 'Bot1', channels: {} }],
         agent: { name: 'Unused', model: 'unused' },
         channels: {},
@@ -411,7 +399,7 @@ describe('normalizeAgents', () => {
       process.env.HEARTBEAT_SKIP_RECENT_USER_MIN = '5';
 
       const config: LettaBotConfig = {
-        server: { mode: 'cloud' },
+        server: {},
         agent: { name: 'TestBot', model: 'test' },
         channels: {},
       };
@@ -433,7 +421,7 @@ describe('normalizeAgents', () => {
       process.env.HEARTBEAT_INTERRUPT_ON_USER_MESSAGE = 'false';
 
       const config: LettaBotConfig = {
-        server: { mode: 'cloud' },
+        server: {},
         agent: { name: 'TestBot', model: 'test' },
         channels: {},
       };
@@ -455,7 +443,7 @@ describe('normalizeAgents', () => {
       process.env.SLEEPTIME_STEP_COUNT = '25';
 
       const config: LettaBotConfig = {
-        server: { mode: 'cloud' },
+        server: {},
         agent: { name: 'TestBot', model: 'test' },
         channels: {},
       };
@@ -473,7 +461,7 @@ describe('normalizeAgents', () => {
       process.env.CRON_ENABLED = 'true';
 
       const config: LettaBotConfig = {
-        server: { mode: 'cloud' },
+        server: {},
         agent: { name: 'TestBot', model: 'test' },
         channels: {},
       };
@@ -488,7 +476,7 @@ describe('normalizeAgents', () => {
       process.env.HEARTBEAT_INTERVAL_MIN = '20';
 
       const config: LettaBotConfig = {
-        server: { mode: 'cloud' },
+        server: {},
         agent: { name: 'TestBot', model: 'test' },
         channels: {},
         features: {
@@ -514,7 +502,7 @@ describe('normalizeAgents', () => {
       process.env.SLEEPTIME_BEHAVIOR = 'auto-launch';
 
       const config: LettaBotConfig = {
-        server: { mode: 'cloud' },
+        server: {},
         agent: { name: 'TestBot', model: 'test' },
         channels: {},
         features: {
@@ -540,7 +528,7 @@ describe('normalizeAgents', () => {
       process.env.HEARTBEAT_INTERRUPT_ON_USER_MESSAGE = 'false';
 
       const config: LettaBotConfig = {
-        server: { mode: 'cloud' },
+        server: {},
         agent: { name: 'TestBot', model: 'test' },
         channels: {},
         features: {
@@ -569,7 +557,7 @@ describe('normalizeAgents', () => {
       process.env.SLEEPTIME_STEP_COUNT = '99';
 
       const config: LettaBotConfig = {
-        server: { mode: 'cloud' },
+        server: {},
         agent: { name: 'TestBot', model: 'test' },
         channels: {},
         features: {
@@ -594,7 +582,7 @@ describe('normalizeAgents', () => {
       process.env.HEARTBEAT_ENABLED = 'true';
 
       const config: LettaBotConfig = {
-        server: { mode: 'cloud' },
+        server: {},
         agent: { name: 'TestBot', model: 'test' },
         channels: {},
       };
@@ -608,7 +596,7 @@ describe('normalizeAgents', () => {
       process.env.CRON_ENABLED = 'true';
 
       const config: LettaBotConfig = {
-        server: { mode: 'cloud' },
+        server: {},
         agent: { name: 'TestBot', model: 'test' },
         channels: {},
         features: {
@@ -625,7 +613,7 @@ describe('normalizeAgents', () => {
       process.env.HEARTBEAT_ENABLED = 'false';
 
       const config: LettaBotConfig = {
-        server: { mode: 'cloud' },
+        server: {},
         agent: { name: 'TestBot', model: 'test' },
         channels: {},
       };
@@ -644,7 +632,7 @@ describe('normalizeAgents', () => {
       process.env.DISCORD_BOT_TOKEN = 'discord-token';
 
       const config: LettaBotConfig = {
-        server: { mode: 'cloud' },
+        server: {},
         agent: { name: 'TestBot', model: 'test' },
         channels: {},
       };
@@ -665,7 +653,7 @@ describe('normalizeAgents', () => {
       process.env.SIGNAL_READ_RECEIPTS = 'false';
 
       const config: LettaBotConfig = {
-        server: { mode: 'cloud' },
+        server: {},
         agent: { name: 'TestBot', model: 'test' },
         channels: {},
       };
@@ -683,7 +671,7 @@ describe('normalizeAgents', () => {
       process.env.SIGNAL_SELF_CHAT_MODE = '   ';
 
       const config: LettaBotConfig = {
-        server: { mode: 'cloud' },
+        server: {},
         agent: { name: 'TestBot', model: 'test' },
         channels: {},
       };
@@ -718,7 +706,7 @@ describe('normalizeAgents', () => {
       process.env.SIGNAL_ALLOWED_USERS = '+1555111111';
 
       const config: LettaBotConfig = {
-        server: { mode: 'cloud' },
+        server: {},
         agent: { name: 'TestBot', model: 'test' },
         channels: {},
       };
@@ -746,7 +734,7 @@ describe('normalizeAgents', () => {
       process.env.TELEGRAM_ALLOWED_USERS = ' ,  , ';
 
       const config: LettaBotConfig = {
-        server: { mode: 'cloud' },
+        server: {},
         agent: { name: 'TestBot', model: 'test' },
         channels: {},
       };
@@ -758,7 +746,7 @@ describe('normalizeAgents', () => {
 
   it('should preserve features, polling, and integrations', () => {
     const config: LettaBotConfig = {
-      server: { mode: 'cloud' },
+      server: {},
       agent: { name: 'TestBot', model: 'test' },
       channels: {},
       features: {
@@ -791,7 +779,7 @@ describe('normalizeAgents', () => {
 
   it('should pass through displayName', () => {
     const config: LettaBotConfig = {
-      server: { mode: 'cloud' },
+      server: {},
       agent: {
         name: 'Signo',
         displayName: '💜 Signo',
@@ -821,7 +809,7 @@ describe('normalizeAgents', () => {
     ];
 
     const config = {
-      server: { mode: 'cloud' as const },
+      server: {},
       agents: agentsArray,
     } as LettaBotConfig;
 
@@ -833,7 +821,7 @@ describe('normalizeAgents', () => {
 
   it('should pass through conversations config in legacy mode', () => {
     const config: LettaBotConfig = {
-      server: { mode: 'cloud' },
+      server: {},
       agent: { name: 'TestBot' },
       channels: {},
       conversations: {
@@ -850,7 +838,7 @@ describe('normalizeAgents', () => {
 
   it('should pass through conversations as undefined when not set', () => {
     const config: LettaBotConfig = {
-      server: { mode: 'cloud' },
+      server: {},
       agent: { name: 'TestBot' },
       channels: {},
     };
@@ -864,7 +852,7 @@ describe('normalizeAgents', () => {
     // This matches the shape that onboarding now writes: agents[] at top level,
     // with no legacy agent/channels/features fields.
     const config = {
-      server: { mode: 'cloud' as const },
+      server: {},
       agents: [{
         name: 'LettaBot',
         id: 'agent-abc123',

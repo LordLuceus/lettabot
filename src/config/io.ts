@@ -14,12 +14,26 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import YAML from 'yaml';
 import type { LettaBotConfig, ProviderConfig } from './types.js';
-import { DEFAULT_CONFIG, canonicalizeServerMode, isApiServerMode, isDockerServerMode } from './types.js';
+import { DEFAULT_CONFIG } from './types.js';
 import { isFleetConfig, fleetConfigToLettaBotConfig, setLoadedFromFleetConfig } from './fleet-adapter.js';
 
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Config');
+
+/**
+ * Strip legacy fields from a server block (e.g. `mode`, which used to
+ * distinguish Letta cloud from self-hosted but is no longer meaningful).
+ * Accepts arbitrary input shapes so it can sanitize parsed YAML.
+ */
+function dropLegacyServerFields<T extends LettaBotConfig['server']>(server: T): T {
+  if (server && typeof server === 'object' && 'mode' in server) {
+    const copy = { ...server };
+    delete (copy as Record<string, unknown>).mode;
+    return copy;
+  }
+  return server;
+}
 
 function getInlineConfigEnvValue(): string | undefined {
   const raw = process.env.LETTABOT_CONFIG_YAML;
@@ -184,22 +198,16 @@ function parseAndNormalizeConfig(content: string): LettaBotConfig {
     // Safety pass on converted top-level channels (single-agent format).
     fixLargeGroupIds(content, converted);
 
-    // Merge with defaults and canonicalize server mode (same as native path)
+    // Merge with defaults; drop any legacy `mode` field.
     const merged = {
       ...DEFAULT_CONFIG,
       ...converted,
-      server: { ...DEFAULT_CONFIG.server, ...converted.server },
+      server: dropLegacyServerFields({ ...DEFAULT_CONFIG.server, ...converted.server }),
       agent: { ...DEFAULT_CONFIG.agent, ...converted.agent },
       channels: { ...DEFAULT_CONFIG.channels, ...converted.channels },
     };
 
-    return {
-      ...merged,
-      server: {
-        ...merged.server,
-        mode: canonicalizeServerMode(merged.server.mode),
-      },
-    };
+    return merged;
   }
 
   setLoadedFromFleetConfig(false);
@@ -218,22 +226,16 @@ function parseAndNormalizeConfig(content: string): LettaBotConfig {
     );
   }
 
-  // Merge with defaults and canonicalize server mode.
+  // Merge with defaults; drop any legacy `mode` field on the server block.
   const merged = {
     ...DEFAULT_CONFIG,
     ...typedParsed,
-    server: { ...DEFAULT_CONFIG.server, ...typedParsed.server },
+    server: dropLegacyServerFields({ ...DEFAULT_CONFIG.server, ...typedParsed.server }),
     agent: { ...DEFAULT_CONFIG.agent, ...typedParsed.agent },
     channels: { ...DEFAULT_CONFIG.channels, ...typedParsed.channels },
   };
 
-  const config = {
-    ...merged,
-    server: {
-      ...merged.server,
-      mode: canonicalizeServerMode(merged.server.mode),
-    },
-  };
+  const config = merged;
 
   // Deprecation warning: top-level api should be moved under server
   if (config.api && !config.server.api) {
@@ -343,7 +345,7 @@ export function configToEnv(config: LettaBotConfig): Record<string, string> {
   const env: Record<string, string> = {};
   
   // Server
-  if (isDockerServerMode(config.server.mode) && config.server.baseUrl) {
+  if (config.server.baseUrl) {
     env.LETTA_BASE_URL = config.server.baseUrl;
   }
   if (config.server.apiKey) {
