@@ -1,6 +1,6 @@
 # Railway Deployment
 
-Deploy LettaBot to [Railway](https://railway.app) for always-on hosting. For other platforms (Fly.io, Docker, Render), see [Cloud Deployment](./cloud-deploy.md).
+Deploy LettaBot to [Railway](https://railway.app) for always-on hosting. For self-hosting on your own Letta server, see [Self-Hosted Letta Server](./selfhosted-setup.md).
 
 ## One-Click Deploy
 
@@ -33,9 +33,8 @@ For simple setups (one channel, basic config), you can use individual env vars i
 
 #### Required
 
-| Variable | Description |
-|----------|-------------|
-| `LETTA_API_KEY` | Your Letta API key ([get one here](https://app.letta.com)) |
+- `LETTA_BASE_URL`: URL of your Letta server (e.g. `https://letta.example.com` or `http://localhost:8283`)
+- `LETTA_API_KEY`: API key for your Letta server, if it has auth enabled
 
 #### Channel Configuration (at least one required)
 

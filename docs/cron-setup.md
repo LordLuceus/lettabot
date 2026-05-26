@@ -219,7 +219,7 @@ Migration note:
 
 1. Check if Bash tool is enabled (agent needs to run CLI)
 2. Verify a user has messaged the bot at least once
-3. Check the [ADE](https://app.letta.com) to see agent activity
+3. Check your Letta server's web UI (if available) to see agent activity
 
 ### Jobs running but no messages received
 

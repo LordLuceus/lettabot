@@ -134,8 +134,6 @@ volumes:
   letta-data:
 ```
 
-For general Docker and cloud deployment (without a self-hosted Letta server), see [Cloud Deployment](./cloud-deploy.md).
-
 ## Troubleshooting
 
 ### Connection Refused

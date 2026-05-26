@@ -19,8 +19,9 @@ npm install
 npm run build
 npm link
 
-# 2. Configure required variables
-export LETTA_API_KEY="letta_..."        # From app.letta.com
+# 2. Configure server (self-hosted Letta)
+export LETTA_BASE_URL="http://localhost:8283"   # URL of your Letta server
+export LETTA_API_KEY="..."                       # Only if your server has auth enabled
 
 # 3. Configure channel (example: Telegram)
 export TELEGRAM_BOT_TOKEN="123456:ABC-DEF..."  # From @BotFather
@@ -33,7 +34,7 @@ lettabot server
 ```
 
 **Safe defaults used if not set:**
-- `LETTA_BASE_URL`: `https://api.letta.com`
+- `LETTA_BASE_URL`: `http://localhost:8283`
 - `LETTA_AGENT_NAME`: `"lettabot"`
 - Model: selected during `lettabot onboard` or changed with `lettabot model set <handle>`
 - `*_DM_POLICY`: `"pairing"` (requires approval before messaging)
@@ -51,18 +52,16 @@ lettabot onboard
 ```
 
 The wizard will guide you through:
-- Letta API authentication (OAuth or API key)
+- Letta server URL and optional API key
 - Agent selection/creation
 - Channel configuration (Telegram, Slack, Discord, WhatsApp, Signal)
 
 ## Environment Variables
 
-### Authentication
+### Server connection
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `LETTA_API_KEY` | API key from app.letta.com | Required (unless using a Docker server) |
-| `LETTA_BASE_URL` | API endpoint | `https://api.letta.com` |
+- `LETTA_BASE_URL`: URL of your Letta server. Default: `http://localhost:8283`
+- `LETTA_API_KEY`: API key for your Letta server. Only required if your server has auth enabled.
 
 ### Agent Selection
 
@@ -245,8 +244,8 @@ After onboarding, config is saved to `~/.lettabot/config.yaml`:
 
 ```yaml
 server:
-  baseUrl: https://api.letta.com
-  apiKey: letta_...
+  baseUrl: http://localhost:8283
+  apiKey: letta_...           # Only required if your Letta server has auth
   agentId: agent-...
 
 conversations:
@@ -322,16 +321,18 @@ git clone https://github.com/letta-ai/lettabot.git
 cd lettabot
 npm install && npm run build && npm link
 
-# 2. Get Letta API key
-# Guide user to app.letta.com → API Keys → Create Key
+# 2. Ensure a Letta server is running
+# Default: http://localhost:8283 via `docker run letta/letta:latest`
+# (or any custom self-hosted deployment)
 
 # 3. Get Telegram bot token
 # Guide user to @BotFather → /newbot → follow prompts
 
 # 4. Set environment variables
-export LETTA_API_KEY="letta_..."
+export LETTA_BASE_URL="http://localhost:8283"
+export LETTA_API_KEY=""                      # Only required if server has auth
 export TELEGRAM_BOT_TOKEN="123456:ABC-DEF..."
-# Defaults will be used for LETTA_BASE_URL, agent name, and DM policy
+# Defaults will be used for agent name and DM policy
 
 # 5. Run non-interactive setup
 lettabot onboard --non-interactive

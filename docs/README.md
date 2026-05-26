@@ -1,12 +1,11 @@
 # LettaBot Documentation
 
-LettaBot is a multi-channel AI assistant powered by [Letta](https://letta.com) that provides persistent memory and local tool execution across Telegram, Slack, Discord, WhatsApp, and Signal.
+LettaBot is a multi-channel AI assistant powered by a self-hosted [Letta](https://letta.com) server that provides persistent memory and local tool execution across Telegram, Slack, Discord, WhatsApp, and Signal.
 
 ## Guides
 
 - [Getting Started](./getting-started.md) - Installation and basic setup
-- [Cloud Deployment](./cloud-deploy.md) - Deploy to Fly.io, Railway, Docker, or any cloud platform
-- [Self-Hosted Letta Server](./selfhosted-setup.md) - Run with your own Letta server (instead of Letta API)
+- [Self-Hosted Letta Server](./selfhosted-setup.md) - Run your own Letta server
 - [Configuration Reference](./configuration.md) - All config options
 - [Commands Reference](./commands.md) - Bot commands reference
 - [CLI Tools](./cli-tools.md) - Agent/operator CLI tools
@@ -64,9 +63,9 @@ LettaBot uses a **single agent with unified memory** across all channels:
                                      ▼
                        ┌──────────────────────────┐
                        │      Letta Server        │
-                       │  (api.letta.com or       │
-                       │   Docker/custom)         │
-                       │                          │
+                       │   (self-hosted, e.g.     │
+                       │   localhost:8283 or      │
+                       │   Docker/custom URL)     │
                        │  • Agent Memory          │
                        │  • LLM Inference         │
                        │  • Conversation History  │

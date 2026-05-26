@@ -30,9 +30,8 @@ Your personal AI assistant that remembers everything across **Telegram, Slack, D
 ### Prerequisites
 
 - Node.js 20+
-- A Letta API key from [app.letta.com](https://app.letta.com) (or a running [Letta Docker server](https://docs.letta.com/guides/docker/))
+- A self-hosted Letta server (run via [Letta Docker](https://docs.letta.com/guides/docker/), or your own deployment such as `LordLuceus/letta`)
 - A Telegram bot token from [@BotFather](https://t.me/BotFather)
-- Optional: a ChatGPT subscription account you want to use for model credits
 
 ### Install
 
@@ -60,8 +59,10 @@ npm install
 npm run build
 ```
 
-#### Optional: Run a Letta Docker server 
-You can use `lettabot` with a Docker server with: 
+#### Run a Letta Docker server
+
+You'll need a Letta server running somewhere — typically Docker on localhost:
+
 ```
 docker run \
   -v ~/.letta/.persist/pgdata:/var/lib/postgresql/data \
@@ -69,7 +70,8 @@ docker run \
   -e OPENAI_API_KEY="your_openai_api_key" \
   letta/letta:latest
 ```
-See the [documentation](https://docs.letta.com/guides/docker/) for more details on running with Docker. 
+
+See the [documentation](https://docs.letta.com/guides/docker/) for more details on running with Docker.
 
 ### Setup
 
@@ -83,7 +85,7 @@ for setup instructions, and help me configure Telegram.
 ```
 
 You'll need:
-- A Letta API key from [app.letta.com](https://app.letta.com) (or a [Letta Docker server](https://docs.letta.com/guides/docker/))
+- A self-hosted Letta server URL (e.g. `http://localhost:8283` via [Letta Docker](https://docs.letta.com/guides/docker/))
 - A Telegram bot token from [@BotFather](https://t.me/BotFather)
 
 The AI will handle cloning, installing, and configuration autonomously.
@@ -98,14 +100,6 @@ cd lettabot
 npm install && npm run build && npm link
 lettabot onboard
 ```
-
-Prefer to use your ChatGPT subscription instead of another API key? After onboarding (or anytime), run:
-
-```bash
-lettabot connect chatgpt
-```
-
-This opens a browser flow and enables connected subscription handles in the model picker.
 
 ### Run
 
@@ -177,7 +171,6 @@ Then ask your bot things like:
 | Command | Description |
 |---------|-------------|
 | `lettabot onboard` | Interactive setup wizard |
-| `lettabot connect` | Connect model providers (for example, `chatgpt`) |
 | `lettabot server` | Start the bot server |
 | `lettabot configure` | View and edit configuration |
 | `lettabot skills status` | Show enabled and available skills |
@@ -294,7 +287,7 @@ The agent sees a clear `[SILENT MODE]` banner when triggered by heartbeats/cron,
 - The **Bash tool must be enabled** for the agent to run the CLI
 - A user must have messaged the bot at least once (to establish a delivery target) unless you provide an explicit target
 
-If your agent isn't sending messages during heartbeats, check the [ADE](https://app.letta.com) to see what the agent is doing and whether it's attempting to use `lettabot-message`.
+If your agent isn't sending messages during heartbeats, check your Letta server's web UI (if available) to see what the agent is doing and whether it's attempting to use `lettabot-message`.
 
 ## Agent CLI Tools
 
@@ -430,7 +423,7 @@ Heartbeats and cron jobs run in "Silent Mode" - the agent's text output is priva
 ```bash
 lettabot-message send --text "Your message here"
 ```
-Check the [ADE](https://app.letta.com) to see if your agent is attempting to use this command. Common issues:
+Check your Letta server's web UI (if available) to see if your agent is attempting to use this command. Common issues:
 - Bash tool not enabled (agent can't run CLI commands)
 - Agent doesn't understand it needs to use the CLI
 - No delivery target set (user never messaged the bot first)

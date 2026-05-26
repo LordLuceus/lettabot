@@ -1,18 +1,13 @@
 # LettaBot Configuration
 # Copy this to lettabot.yaml and fill in your values.
 #
-# Server modes:
-# - 'api': Use Letta API (api.letta.com) with API key
-# - 'docker': Use a Docker/custom Letta server
-# Legacy aliases still accepted: 'cloud', 'selfhosted'
+# LettaBot talks to a self-hosted Letta server (default
+# http://localhost:8283). Set baseUrl to point at your server; set
+# apiKey if your server has auth enabled.
 
 server:
-  mode: api
-  # For api mode, set your API key (get one at https://app.letta.com):
-  apiKey: sk-let-YOUR-API-KEY
-  # For docker mode, uncomment and set the base URL:
-  # mode: docker
-  # baseUrl: http://localhost:8283
+  baseUrl: http://localhost:8283
+  # apiKey: sk-let-...   # Only required if your Letta server has auth enabled
 
 agents:
   - name: LettaBot
@@ -80,8 +75,8 @@ agents:
       #   # appPassword: xxxx-xxxx-xxxx-xxxx
       #   # serviceUrl: https://bsky.social
 
-# BYOK Providers (optional, api mode only)
-# These will be synced to Letta API on startup
+# BYOK Providers (optional)
+# Synced to your Letta server's /v1/providers on startup (requires server.apiKey).
 # providers:
 #   - id: anthropic
 #     name: lc-anthropic

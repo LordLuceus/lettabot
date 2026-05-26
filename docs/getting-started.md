@@ -4,10 +4,10 @@ Get LettaBot running in 5 minutes.
 
 ## Prerequisites
 
-- Node.js 20+ 
+- Node.js 20+
 - npm or yarn
 - A Telegram account
-- A Letta account ([app.letta.com](https://app.letta.com))
+- A self-hosted Letta server (see [Self-Hosted Letta Server](./selfhosted-setup.md))
 
 ## Quick Start
 
@@ -27,24 +27,7 @@ npm ci
 2. Send `/newbot` and follow the prompts
 3. Copy the **bot token** (looks like `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`)
 
-### 3. Get a Letta API Key
-
-1. Go to [app.letta.com](https://app.letta.com)
-2. Sign in or create an account
-3. Go to Settings > API Keys
-4. Create a new API key and copy it
-
-### 3b. Connect your ChatGPT subscription (optional)
-
-If you want connected provider models from your ChatGPT/ChatGPT Plus subscription, run:
-
-```bash
-lettabot connect chatgpt
-```
-
-The command opens a browser-based flow for OAuth and then makes those handles available in `lettabot model` and onboarding.
-
-### 4. Configure LettaBot
+### 3. Configure LettaBot
 
 **Option A: Interactive Setup (Recommended)**
 
@@ -65,10 +48,11 @@ cp .env.example .env
 Edit `.env`:
 ```bash
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-LETTA_API_KEY=your_letta_api_key
+LETTA_BASE_URL=http://localhost:8283    # URL of your Letta server
+LETTA_API_KEY=your_letta_api_key        # Only if your Letta server has auth
 ```
 
-### 5. Start the Bot
+### 4. Start the Bot
 
 ```bash
 npm run dev
@@ -81,7 +65,7 @@ Bot started as @your_bot_name
 Allowed users: all
 ```
 
-### 6. Chat with Your Bot
+### 5. Chat with Your Bot
 
 Open Telegram and message your bot. Try:
 - "Hello!"
@@ -90,13 +74,14 @@ Open Telegram and message your bot. Try:
 
 ## Configuration Options
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `TELEGRAM_BOT_TOKEN` | Yes | From @BotFather |
-| `LETTA_API_KEY` | Yes | From app.letta.com |
-| `ALLOWED_USERS` | No | Comma-separated Telegram user IDs to allow |
-| `WORKING_DIR` | No | Base directory for agent workspaces (default: `/tmp/lettabot`) |
-| `LETTA_CLI_PATH` | No | Custom path to letta CLI |
+Configuration is most easily expressed as a list rather than a table.
+
+- `TELEGRAM_BOT_TOKEN` (required): from @BotFather
+- `LETTA_BASE_URL` (optional): URL of your Letta server. Default: `http://localhost:8283`
+- `LETTA_API_KEY` (optional): only required if your Letta server has auth enabled
+- `ALLOWED_USERS` (optional): comma-separated Telegram user IDs to allow
+- `WORKING_DIR` (optional): base directory for agent workspaces (default: `/tmp/lettabot`)
+- `LETTA_CLI_PATH` (optional): custom path to letta CLI
 
 ## Restricting Access
 
