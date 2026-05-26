@@ -153,7 +153,7 @@ async function saveConfigFromEnv(config: any, configPath: string, existingConfig
 
 interface OnboardConfig {
   // Auth
-  authMethod: 'keep' | 'apikey' | 'docker' | 'selfhosted' | 'skip';
+  authMethod: 'keep' | 'configured' | 'skip';
   apiKey?: string;
   baseUrl?: string;
 
@@ -686,13 +686,12 @@ async function stepAuth(config: OnboardConfig, env: Record<string, string>): Pro
     config.apiKey = apiKey;
     env.LETTA_API_KEY = apiKey;
     process.env.LETTA_API_KEY = apiKey;
-    config.authMethod = 'apikey';
   } else {
     delete config.apiKey;
     delete env.LETTA_API_KEY;
     delete process.env.LETTA_API_KEY;
-    config.authMethod = 'docker';
   }
+  config.authMethod = 'configured';
 
   // Validate the connection.
   const spinner = p.spinner();
@@ -1370,16 +1369,16 @@ async function addGoogleAccount(): Promise<{ account: string; services: string[]
 function showSummary(config: OnboardConfig): void {
   const lines: string[] = [];
   
-  // Auth
-  const authLabel = {
-    keep: 'Keep existing',
-    oauth: 'OAuth login',
-    apikey: config.apiKey ? `API Key (${config.apiKey.slice(0, 10)}...)` : 'API Key',
-    docker: config.baseUrl ? `Docker server (${config.baseUrl})` : 'Docker server',
-    selfhosted: config.baseUrl ? `Docker server (${config.baseUrl})` : 'Docker server',
-    skip: 'None',
-  }[config.authMethod];
-  lines.push(`Auth:      ${authLabel}`);
+  // Server
+  const serverLabel = (() => {
+    if (config.authMethod === 'keep') return 'Keep existing';
+    if (config.authMethod === 'skip') return 'None';
+    const url = config.baseUrl || 'http://localhost:8283';
+    return config.apiKey
+      ? `${url} (API key set)`
+      : url;
+  })();
+  lines.push(`Server:    ${serverLabel}`);
   
   // Agent
   const agentLabel = config.agentId 
@@ -1448,7 +1447,7 @@ async function reviewLoop(config: OnboardConfig, env: Record<string, string>): P
       message: 'What would you like to do?',
       options: [
         { value: 'save', label: 'Save and finish', hint: '' },
-        { value: 'auth', label: 'Change authentication', hint: '' },
+        { value: 'auth', label: 'Change server URL / API key', hint: '' },
         { value: 'agent', label: 'Change agent', hint: '' },
         { value: 'channels', label: 'Change channels', hint: '' },
         { value: 'features', label: 'Change features', hint: '' },
