@@ -1,13 +1,9 @@
 /**
- * Startup banner with LETTABOT block text and community loom ASCII art.
- *
- * Looms are loaded from src/looms/*.txt at startup. One is picked
- * randomly each boot. See src/looms/README.md for contribution guide.
+ * Startup banner with LETTABOT block text and runtime status lines.
  */
 
 import { execSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { loadRandomLoom } from '../looms/loom-loader.js';
 
 const require = createRequire(import.meta.url);
 
@@ -51,26 +47,14 @@ const BLOCK_TEXT = `
 ░██████████ ░██████████     ░██        ░██    ░██    ░██ ░█████████    ░██████       ░██
 `.trim();
 
-const P = '            '; // 12-space prefix for centering the box
-
 export function printStartupBanner(agents: BannerAgent[]): void {
   // Block text
   console.log('');
   console.log(BLOCK_TEXT);
   console.log('');
 
-  // Community loom — randomly selected from src/looms/*.txt
-  const loom = loadRandomLoom();
-  if (loom) {
-    for (const line of loom.lines) {
-      console.log(P + line);
-    }
-    console.log(`${P}  loom: ${loom.metadata.name} by ${loom.metadata.author}`);
-  }
-
   // Status lines
   const versionStr = getVersionString();
-  console.log('');
   console.log(`  Version:  ${versionStr}`);
   for (const agent of agents) {
     const ch = agent.channels.length > 0 ? agent.channels.join(', ') : 'none';
