@@ -84,17 +84,14 @@ export function formatApiErrorForUser(error: { message: string; stopReason: stri
   const apiMsg = (typeof apiError.message === 'string' ? apiError.message : '').toLowerCase();
   const reasons: string[] = Array.isArray(apiError.reasons) ? apiError.reasons : [];
 
-  // Billing / credits exhausted
+  // Billing / credits exhausted (provider-side, e.g. BYOK provider)
   if (msg.includes('out of credits') || apiMsg.includes('out of credits')) {
-    return '(Out of credits for hosted inference. Add credits or enable auto-recharge at app.letta.com/settings/organization/usage.)';
+    return '(Out of credits with the configured inference provider. Top up your provider account or switch models.)';
   }
 
   // Rate limiting / usage exceeded (429)
   if (msg.includes('rate limit') || msg.includes('429') || msg.includes('usage limit')
     || apiMsg.includes('rate limit') || apiMsg.includes('usage limit')) {
-    if (reasons.includes('premium-usage-exceeded') || msg.includes('hosted model usage limit')) {
-      return '(Rate limited -- your Letta Cloud usage limit has been exceeded. Check your plan at app.letta.com.)';
-    }
     const reasonStr = reasons.length > 0 ? `: ${reasons.join(', ')}` : '';
     return `(Rate limited${reasonStr}. Try again in a moment.)`;
   }
@@ -112,7 +109,7 @@ export function formatApiErrorForUser(error: { message: string; stopReason: stri
     || apiMsg.includes('409')
     || stopReason === 'requires_approval';
   if (hasApprovalSignal && hasConflictSignal) {
-    return '(A stuck tool approval is blocking this conversation. Send /reset to start a new conversation, or approve/deny the pending request at app.letta.com. Note: /reset creates a fresh conversation -- previous context will no longer be active.)';
+    return '(A stuck tool approval is blocking this conversation. Send /reset to start a new conversation, or approve/deny the pending request via your Letta server UI. Note: /reset creates a fresh conversation -- previous context will no longer be active.)';
   }
 
   // 409 CONFLICT (concurrent request on same conversation)

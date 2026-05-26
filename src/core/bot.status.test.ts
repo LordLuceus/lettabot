@@ -74,7 +74,7 @@ describe('LettaBot /status command', () => {
     expect(response).toContain('Conversation ID: `conv-shared-123`');
     expect(response).toContain('Conversation keys: telegram');
     expect(response).toContain('Memfs: on');
-    expect(response).toContain('Server: https://api.letta.com');
+    expect(response).toContain('Server: http://localhost:8283');
     expect(response).toContain('Channels: mock');
   });
 });

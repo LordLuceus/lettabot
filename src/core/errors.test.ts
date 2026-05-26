@@ -66,13 +66,13 @@ describe('formatApiErrorForUser', () => {
     expect(msg).toContain('Out of credits');
   });
 
-  it('maps premium usage exceeded rate limits', () => {
+  it('maps rate limits with reason details', () => {
     const msg = formatApiErrorForUser({
       message: '429 rate limit',
       stopReason: 'error',
       apiError: { reasons: ['premium-usage-exceeded'] },
     });
-    expect(msg).toContain('usage limit has been exceeded');
+    expect(msg).toContain('Rate limited: premium-usage-exceeded');
   });
 
   it('maps generic rate limits with reason details', () => {

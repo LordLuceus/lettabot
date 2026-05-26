@@ -679,7 +679,7 @@ export function createApiServer(deliverer: AgentRouter, options: ServerOptions):
         const { Letta } = await import('@letta-ai/letta-client');
         const client = new Letta({
           apiKey: process.env.LETTA_API_KEY || '',
-          baseURL: process.env.LETTA_BASE_URL || 'https://api.letta.com',
+          baseURL: process.env.LETTA_BASE_URL || 'http://localhost:8283',
         });
         const convos = await client.conversations.list({
           agent_id: agentId,

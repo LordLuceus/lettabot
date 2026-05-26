@@ -73,8 +73,8 @@ async function main() {
       }),
       
       lettaApiKey: () => p.text({
-        message: 'Letta API Key',
-        placeholder: 'Get from app.letta.com or leave empty for local server',
+        message: 'Letta API Key (optional)',
+        placeholder: 'Leave empty if your Letta server has no auth',
         validate: () => undefined, // Optional
       }),
       
@@ -111,11 +111,11 @@ async function main() {
 # Required: Telegram Bot Token (from @BotFather)
 TELEGRAM_BOT_TOKEN=${config.telegramToken}
 
-# Letta API Key (from app.letta.com, or leave empty for local server)
+# Letta API Key (optional, only required if your Letta server has auth enabled)
 LETTA_API_KEY=${config.lettaApiKey || ''}
 
-# Optional: Letta server URL (default: https://api.letta.com)
-# LETTA_BASE_URL=https://api.letta.com
+# Optional: Letta server URL (default: http://localhost:8283)
+# LETTA_BASE_URL=http://localhost:8283
 
 # Security: Comma-separated Telegram user IDs (empty = allow all)
 ALLOWED_USERS=${config.allowedUsers || ''}

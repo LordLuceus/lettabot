@@ -400,7 +400,7 @@ export class Store {
 
     // Normalize URLs for comparison
     const stored = agent.baseUrl.replace(/\/$/, '');
-    const current = (currentBaseUrl || 'https://api.letta.com').replace(/\/$/, '');
+    const current = (currentBaseUrl || 'http://localhost:8283').replace(/\/$/, '');
 
     return stored !== current;
   }

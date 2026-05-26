@@ -1846,7 +1846,7 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   
   // Save agent ID with server URL
   if (config.agentId) {
-    const baseUrl = env.LETTA_BASE_URL || process.env.LETTA_BASE_URL || 'https://api.letta.com';
+    const baseUrl = env.LETTA_BASE_URL || process.env.LETTA_BASE_URL || 'http://localhost:8283';
     writeFileSync(
       resolve(process.cwd(), 'lettabot-agent.json'),
       JSON.stringify({ 

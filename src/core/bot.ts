@@ -874,7 +874,7 @@ export class LettaBot implements AgentSession {
           : this.config.memfs === false
             ? 'off'
             : 'unknown';
-        const serverUrl = info.baseUrl || process.env.LETTA_BASE_URL || 'https://api.letta.com';
+        const serverUrl = info.baseUrl || process.env.LETTA_BASE_URL || 'http://localhost:8283';
         const conversationId = info.conversationId || '(none)';
         const conversationKeys = info.conversations
           ? Object.keys(info.conversations).sort()
@@ -1328,7 +1328,7 @@ export class LettaBot implements AgentSession {
     const isNewChatSession = !prevTarget || prevTarget.chatId !== msg.chatId || prevTarget.channel !== msg.channel;
     const sessionContext: SessionContextOptions | undefined = isNewChatSession ? {
       agentId: this.store.agentId || undefined,
-      serverUrl: process.env.LETTA_BASE_URL || this.store.baseUrl || 'https://api.letta.com',
+      serverUrl: process.env.LETTA_BASE_URL || this.store.baseUrl || 'http://localhost:8283',
     } : undefined;
 
     const formattedText = msg.isBatch && msg.batchedMessages && msg.isGroup
