@@ -50,8 +50,14 @@ export interface SetStatusDirective {
   clear?: boolean;  // If true, remove the current status
 }
 
+export interface SetBioDirective {
+  type: 'set-bio';
+  text?: string;    // The bio / "About Me" text to set on the bot's profile
+  clear?: boolean;  // If true, clear the bio
+}
+
 // Union type — extend with more directive types later
-export type Directive = ReactDirective | SendFileDirective | SendMessageDirective | VoiceDirective | SetStatusDirective;
+export type Directive = ReactDirective | SendFileDirective | SendMessageDirective | VoiceDirective | SetStatusDirective | SetBioDirective;
 
 export interface ParseResult {
   cleanText: string;
@@ -70,21 +76,23 @@ function createActionsBlockRegex(flags = 'g'): RegExp {
 
 /**
  * Match supported directive tags inside the actions block in source order.
- * - Self-closing: <react ... />, <send-file ... />, <set-status ... />
- * - Content-bearing: <voice>...</voice>, <send-message ...>...</send-message>, <set-status>...</set-status>
+ * - Self-closing: <react ... />, <send-file ... />, <set-status ... />, <set-bio ... />
+ * - Content-bearing: <voice>...</voice>, <send-message ...>...</send-message>,
+ *   <set-status>...</set-status>, <set-bio>...</set-bio>
  *
  * The attribute capture uses (?:[^>"']|"[^"]*"|'[^']*')* instead of [^>]*
  * to allow `>` inside quoted attribute values (e.g. emoji="<:name:id>").
  *
  * Groups:
- *   1: self-closing tag name (react|send-file|set-status)
+ *   1: self-closing tag name (react|send-file|set-status|set-bio)
  *   2: self-closing attribute string
  *   3: <voice> text content
  *   4: <send-message> attribute string
  *   5: <send-message> text content
  *   6: <set-status> text content
+ *   7: <set-bio> text content
  */
-const DIRECTIVE_TOKEN_REGEX = /<(react|send-file|set-status)\b((?:[^>"']|"[^"]*"|'[^']*')*)\/>|<voice>([\s\S]*?)<\/voice>|<send-message\b((?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/send-message>|<set-status>([\s\S]*?)<\/set-status>/g;
+const DIRECTIVE_TOKEN_REGEX = /<(react|send-file|set-status|set-bio)\b((?:[^>"']|"[^"]*"|'[^']*')*)\/>|<voice>([\s\S]*?)<\/voice>|<send-message\b((?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/send-message>|<set-status>([\s\S]*?)<\/set-status>|<set-bio>([\s\S]*?)<\/set-bio>/g;
 
 /**
  * Parse a single attribute string like: emoji="eyes" message="123"
@@ -112,7 +120,7 @@ function parseChildDirectives(block: string): Directive[] {
   DIRECTIVE_TOKEN_REGEX.lastIndex = 0;
 
   while ((match = DIRECTIVE_TOKEN_REGEX.exec(normalizedBlock)) !== null) {
-    const [, tagName, attrString, voiceText, sendMsgAttrs, sendMsgText, setStatusText] = match;
+    const [, tagName, attrString, voiceText, sendMsgAttrs, sendMsgText, setStatusText, setBioText] = match;
 
     if (voiceText !== undefined) {
       const text = voiceText.trim();
@@ -136,6 +144,15 @@ function parseChildDirectives(block: string): Directive[] {
       const text = setStatusText.trim();
       if (text) {
         directives.push({ type: 'set-status', text });
+      }
+      continue;
+    }
+
+    if (setBioText !== undefined) {
+      // Content-bearing <set-bio>text</set-bio>
+      const text = setBioText.trim();
+      if (text) {
+        directives.push({ type: 'set-bio', text });
       }
       continue;
     }
@@ -179,6 +196,16 @@ function parseChildDirectives(block: string): Directive[] {
         directives.push({ type: 'set-status', clear: true });
       } else if (attrs.text) {
         directives.push({ type: 'set-status', text: attrs.text });
+      }
+    }
+
+    if (tagName === 'set-bio') {
+      // Self-closing <set-bio clear="true" /> or <set-bio text="..." />
+      const attrs = parseAttributes(attrString || '');
+      if (attrs.clear === 'true') {
+        directives.push({ type: 'set-bio', clear: true });
+      } else if (attrs.text) {
+        directives.push({ type: 'set-bio', text: attrs.text });
       }
     }
   }

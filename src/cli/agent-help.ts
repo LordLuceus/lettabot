@@ -53,6 +53,15 @@ const COMMANDS = [
     ],
   },
   {
+    name: 'lettabot-bio',
+    description: 'Set the bot\'s profile bio / "About Me" (Discord, 400 char limit)',
+    examples: [
+      'lettabot-bio set "Friendly assistant. Ask me anything."',
+      'lettabot-bio clear',
+      'lettabot-bio show',
+    ],
+  },
+  {
     name: 'lettabot-schedule',
     description: 'Create and manage scheduled tasks (reminders, cron jobs)',
     examples: [

@@ -29,6 +29,7 @@ export interface ChannelAdapter {
   sendFile?(file: OutboundFile): Promise<{ messageId: string }>;
   addReaction?(chatId: string, messageId: string, emoji: string): Promise<void>;
   setStatus?(text: string | null): Promise<void>;  // Set custom status text (null to clear)
+  setBio?(text: string | null): Promise<void>;     // Set bot's profile bio / "About Me" (null to clear)
   getDmPolicy?(): string;
   getFormatterHints(): FormatterHints;
   

@@ -352,6 +352,62 @@ describe('parseDirectives', () => {
       { type: 'send-file', path: 'report.pdf', chat: '123' },
     ]);
   });
+
+  // --- set-bio directive ---
+
+  it('parses content-bearing set-bio directive', () => {
+    const result = parseDirectives(
+      '<actions><set-bio>Friendly assistant. Ask me anything.</set-bio></actions>',
+    );
+    expect(result.cleanText).toBe('');
+    expect(result.directives).toEqual([
+      { type: 'set-bio', text: 'Friendly assistant. Ask me anything.' },
+    ]);
+  });
+
+  it('parses self-closing set-bio with text attribute', () => {
+    const result = parseDirectives(
+      '<actions><set-bio text="Friendly assistant" /></actions>',
+    );
+    expect(result.directives).toEqual([{ type: 'set-bio', text: 'Friendly assistant' }]);
+  });
+
+  it('parses self-closing set-bio with clear attribute', () => {
+    const result = parseDirectives(
+      '<actions><set-bio clear="true" /></actions>',
+    );
+    expect(result.directives).toEqual([{ type: 'set-bio', clear: true }]);
+  });
+
+  it('ignores set-bio with empty content', () => {
+    const result = parseDirectives(
+      '<actions><set-bio>   </set-bio></actions>',
+    );
+    expect(result.directives).toEqual([]);
+  });
+
+  it('parses set-bio mixed with set-status and react', () => {
+    const result = parseDirectives(
+      '<actions>' +
+      '<react emoji="thumbsup" />' +
+      '<set-status>Online</set-status>' +
+      '<set-bio>Helpful assistant</set-bio>' +
+      '</actions>',
+    );
+    expect(result.directives).toHaveLength(3);
+    expect(result.directives[0]).toEqual({ type: 'react', emoji: 'thumbsup' });
+    expect(result.directives[1]).toEqual({ type: 'set-status', text: 'Online' });
+    expect(result.directives[2]).toEqual({ type: 'set-bio', text: 'Helpful assistant' });
+  });
+
+  it('parses multiline set-bio text content', () => {
+    const result = parseDirectives(
+      '<actions><set-bio>Line one.\nLine two.\nLine three.</set-bio></actions>',
+    );
+    expect(result.directives).toEqual([
+      { type: 'set-bio', text: 'Line one.\nLine two.\nLine three.' },
+    ]);
+  });
 });
 
 describe('stripActionsBlock', () => {

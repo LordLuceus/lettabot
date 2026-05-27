@@ -364,6 +364,8 @@ function buildResponseDirectives(msg: InboundMessage): string[] {
   if (msg.channel === 'discord') {
     lines.push(`- \`<actions><set-status>Your status text</set-status></actions>\` — set custom status (128 char limit)`);
     lines.push(`- \`<actions><set-status clear="true" /></actions>\` — clear custom status`);
+    lines.push(`- \`<actions><set-bio>Your bio / About Me text</set-bio></actions>\` — set profile bio (400 char limit)`);
+    lines.push(`- \`<actions><set-bio clear="true" /></actions>\` — clear profile bio`);
   }
 
   return lines;

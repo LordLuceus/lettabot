@@ -12,6 +12,7 @@
     "lettabot-history": "./dist/cli/history.js",
     "lettabot-channels": "./dist/cli/channels.js",
     "lettabot-status": "./dist/cli/status.js",
+    "lettabot-bio": "./dist/cli/bio.js",
     "lettabot-help": "./dist/cli/agent-help.js"
   },
   "scripts": {

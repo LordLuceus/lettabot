@@ -48,6 +48,7 @@ Key commands:
 - \`lettabot-channels\` — List channels (\`list\`) and custom emoji (\`emoji\`) across platforms
 - \`lettabot-history\` — Fetch message history from channels (Discord, Slack)
 - \`lettabot-status\` — Set/clear custom bot status text (Discord)
+- \`lettabot-bio\` — Set/clear the bot's profile bio / "About Me" (Discord)
 - \`lettabot-schedule\` — Create and manage scheduled tasks, reminders, and cron jobs
 
 The system will clearly indicate when you are in silent mode with a banner like:

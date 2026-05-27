@@ -643,6 +643,26 @@ export class LettaBot implements AgentSession {
         continue;
       }
 
+      if (directive.type === 'set-bio') {
+        if (typeof adapter.setBio !== 'function') {
+          log.warn(`Directive set-bio skipped: ${adapter.name} does not support setBio`);
+          continue;
+        }
+        try {
+          if (directive.clear) {
+            await adapter.setBio(null);
+            log.info('Directive: cleared bio');
+          } else if (directive.text) {
+            await adapter.setBio(directive.text);
+            log.info(`Directive: set bio (${directive.text.length} chars)`);
+          }
+          acted = true;
+        } catch (err) {
+          log.warn('Directive set-bio failed:', err instanceof Error ? err.message : err);
+        }
+        continue;
+      }
+
       if (directive.type === 'voice') {
         if (!isVoiceMemoConfigured()) {
           this.log.warn('Directive voice skipped: no TTS credentials configured');

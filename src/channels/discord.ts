@@ -119,6 +119,7 @@ export class DiscordAdapter implements ChannelAdapter {
   private attachmentsMaxBytes?: number;
   private statusWatcher: ReturnType<typeof setInterval> | null = null;
   private lastStatusText: string | null = null;
+  private bioWatcher: ReturnType<typeof setInterval> | null = null;
 
   onMessage?: (msg: InboundMessage) => Promise<void>;
   onCommand?: (command: string, chatId?: string, args?: string, forcePerChat?: boolean) => Promise<string | null>;
@@ -268,6 +269,30 @@ Ask the bot owner to approve with:
           log.debug('Status poll error:', err instanceof Error ? err.message : err);
         }
       }, 5000); // Poll every 5 seconds
+
+      // Watch bio-request file for one-shot requests from lettabot-bio CLI.
+      // Unlike bot-status.json this file is consumed and deleted after each
+      // apply — the bio itself lives on Discord's servers, the file is
+      // strictly an IPC channel.
+      log.info(`Bio request file: ${BIO_REQUEST_FILE}`);
+      this.bioWatcher = setInterval(async () => {
+        try {
+          const request = await loadBioRequest();
+          if (!request) return;
+          // Always delete the request file first so a transient setBio failure
+          // doesn't get retried in a tight 5-second loop on every poll.
+          await fs.unlink(BIO_REQUEST_FILE).catch(() => {});
+          if (request.clear) {
+            await this.setBio(null);
+            log.info('Bio cleared from file request');
+          } else if (typeof request.text === 'string' && request.text.length > 0) {
+            await this.setBio(request.text);
+            log.info(`Bio updated from file request (${request.text.length} chars)`);
+          }
+        } catch (err) {
+          log.debug('Bio poll error:', err instanceof Error ? err.message : err);
+        }
+      }, 5000);
     });
 
     this.client.on('messageCreate', async (message) => {
@@ -575,6 +600,10 @@ Ask the bot owner to approve with:
       clearInterval(this.statusWatcher);
       this.statusWatcher = null;
     }
+    if (this.bioWatcher) {
+      clearInterval(this.bioWatcher);
+      this.bioWatcher = null;
+    }
     if (!this.running || !this.client) return;
     this.client.destroy();
     this.running = false;
@@ -715,6 +744,29 @@ Ask the bot owner to approve with:
     }
     // Persist for restart recovery
     await saveDiscordStatus(text);
+  }
+
+  async setBio(text: string | null): Promise<void> {
+    if (!this.client?.application) throw new Error('Discord not started');
+    let description: string;
+    if (text) {
+      if (text.length > DISCORD_BIO_MAX_LENGTH) {
+        const truncated = text.slice(0, DISCORD_BIO_MAX_LENGTH - 1) + '\u2026';
+        log.warn(`Bio text truncated from ${text.length} to ${DISCORD_BIO_MAX_LENGTH} chars`);
+        text = truncated;
+      }
+      description = text;
+    } else {
+      // Discord doesn't allow null/missing description; empty string clears
+      // the visible bio.
+      description = '';
+    }
+    await this.client.application.edit({ description });
+    if (text) {
+      log.info(`Bio set (${text.length} chars)`);
+    } else {
+      log.info('Bio cleared');
+    }
   }
 
   getDmPolicy(): string {
@@ -970,7 +1022,7 @@ Ask the bot owner to approve with:
 
 import { promises as fs } from 'node:fs';
 import { dirname } from 'node:path';
-import { getBotStatusFilePath } from '../utils/paths.js';
+import { getBioRequestFilePath, getBotStatusFilePath } from '../utils/paths.js';
 
 // Resolved at module load. main.ts has already set WORKING_DIR before any
 // channel adapter starts, so the env path covers single- and multi-agent
@@ -1001,9 +1053,26 @@ async function loadDiscordStatus(): Promise<string | null> {
   }
 }
 
+// Resolved at module load alongside STATUS_FILE.
+const BIO_REQUEST_FILE = getBioRequestFilePath();
+
+type BioRequest = { text?: string; clear?: boolean };
+
+async function loadBioRequest(): Promise<BioRequest | null> {
+  try {
+    const data = await fs.readFile(BIO_REQUEST_FILE, 'utf-8');
+    const parsed = JSON.parse(data) as BioRequest;
+    return parsed;
+  } catch {
+    // ENOENT is the common path (no pending request) — silently skip.
+    return null;
+  }
+}
+
 // Discord message length limits
 const DISCORD_MAX_LENGTH = 2000;
 const DISCORD_STATUS_MAX_LENGTH = 128;
+const DISCORD_BIO_MAX_LENGTH = 400;
 const DISCORD_SPLIT_THRESHOLD = 1900;
 
 type DiscordAttachment = {
