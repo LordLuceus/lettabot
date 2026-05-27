@@ -125,6 +125,45 @@ export function getLegacyCronStorePath(): string {
 }
 
 /**
+ * Canonical bot-status.json path.
+ *
+ * The Discord adapter writes `bot-status.json` to persist the current custom
+ * status across restarts and polls it for changes coming from the
+ * `lettabot-status` CLI. The CLI and the bot server are separate processes
+ * with potentially different `process.cwd()`, so the path needs to be
+ * deterministic across both contexts.
+ *
+ * Priority (mirrors getCronDataDir, with an explicit workingDir fallback for
+ * CLI tools that have loaded the YAML config but haven't been started by the
+ * server entrypoint that exports WORKING_DIR):
+ *
+ * 1. RAILWAY_VOLUME_MOUNT_PATH (Railway persistent volume)
+ * 2. DATA_DIR (explicit persistent data override)
+ * 3. WORKING_DIR env var (set by main.ts at server startup)
+ * 4. Caller-provided workingDir (e.g. CLI-loaded YAML agent.workingDir)
+ * 5. /tmp/lettabot (deterministic local fallback, matches resolveWorkingDirPath)
+ */
+export function getBotStatusFilePath(workingDir?: string): string {
+  if (process.env.RAILWAY_VOLUME_MOUNT_PATH) {
+    return resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'bot-status.json');
+  }
+
+  if (process.env.DATA_DIR) {
+    return resolve(process.env.DATA_DIR, 'bot-status.json');
+  }
+
+  if (process.env.WORKING_DIR) {
+    return resolve(resolveWorkingDirPath(process.env.WORKING_DIR), 'bot-status.json');
+  }
+
+  if (workingDir) {
+    return resolve(resolveWorkingDirPath(workingDir), 'bot-status.json');
+  }
+
+  return resolve('/tmp/lettabot', 'bot-status.json');
+}
+
+/**
  * Check if running on Railway
  */
 export function isRailway(): boolean {

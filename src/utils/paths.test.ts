@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import {
+  getBotStatusFilePath,
   getCronDataDir,
   getCronLogPath,
   getCronStorePath,
@@ -108,5 +109,54 @@ describe('working directory path resolution', () => {
 
   it('expands ~ for per-agent workingDir values', () => {
     expect(resolveWorkingDirPath('~/agent-work')).toBe(resolve(homedir(), 'agent-work'));
+  });
+});
+
+describe('getBotStatusFilePath', () => {
+  beforeEach(() => {
+    clearPathEnv();
+  });
+
+  afterEach(() => {
+    clearPathEnv();
+    for (const [key, value] of Object.entries(ORIGINAL_ENV)) {
+      if (value !== undefined) {
+        process.env[key] = value;
+      }
+    }
+  });
+
+  it('prioritizes Railway volume path', () => {
+    process.env.RAILWAY_VOLUME_MOUNT_PATH = '/railway/volume';
+    process.env.DATA_DIR = '/custom/data';
+    process.env.WORKING_DIR = '/custom/work';
+
+    expect(getBotStatusFilePath('/yaml/work')).toBe('/railway/volume/bot-status.json');
+  });
+
+  it('uses DATA_DIR when Railway volume is not set', () => {
+    process.env.DATA_DIR = '/custom/data';
+    process.env.WORKING_DIR = '/custom/work';
+
+    expect(getBotStatusFilePath('/yaml/work')).toBe('/custom/data/bot-status.json');
+  });
+
+  it('uses WORKING_DIR env when DATA_DIR is not set', () => {
+    process.env.WORKING_DIR = '/custom/work';
+
+    expect(getBotStatusFilePath('/yaml/work')).toBe('/custom/work/bot-status.json');
+  });
+
+  it('uses caller-provided workingDir when no env overrides are set', () => {
+    expect(getBotStatusFilePath('/yaml/work')).toBe('/yaml/work/bot-status.json');
+  });
+
+  it('normalizes caller-provided workingDir (~ expansion, relative resolution)', () => {
+    expect(getBotStatusFilePath('~/yaml-work')).toBe(resolve(homedir(), 'yaml-work', 'bot-status.json'));
+    expect(getBotStatusFilePath('relative/yaml-work')).toBe(resolve('relative/yaml-work', 'bot-status.json'));
+  });
+
+  it('falls back to /tmp/lettabot when nothing is set', () => {
+    expect(getBotStatusFilePath()).toBe('/tmp/lettabot/bot-status.json');
   });
 });
