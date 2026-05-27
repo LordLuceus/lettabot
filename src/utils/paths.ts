@@ -164,6 +164,38 @@ export function getBotStatusFilePath(workingDir?: string): string {
 }
 
 /**
+ * Canonical bio-request.json path.
+ *
+ * Used as a one-shot IPC channel from the `lettabot-bio` CLI to the running
+ * bot: the CLI drops a JSON file here, the Discord adapter polls for it,
+ * applies the change to the bot's Discord application description, and
+ * deletes the file. Unlike bot-status.json, this file is NOT persistent
+ * state — the bio itself lives on Discord's servers.
+ *
+ * Same resolution chain as getBotStatusFilePath() so the CLI and the bot
+ * agree regardless of process.cwd() differences.
+ */
+export function getBioRequestFilePath(workingDir?: string): string {
+  if (process.env.RAILWAY_VOLUME_MOUNT_PATH) {
+    return resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'bio-request.json');
+  }
+
+  if (process.env.DATA_DIR) {
+    return resolve(process.env.DATA_DIR, 'bio-request.json');
+  }
+
+  if (process.env.WORKING_DIR) {
+    return resolve(resolveWorkingDirPath(process.env.WORKING_DIR), 'bio-request.json');
+  }
+
+  if (workingDir) {
+    return resolve(resolveWorkingDirPath(workingDir), 'bio-request.json');
+  }
+
+  return resolve('/tmp/lettabot', 'bio-request.json');
+}
+
+/**
  * Check if running on Railway
  */
 export function isRailway(): boolean {

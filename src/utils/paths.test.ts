@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import {
+  getBioRequestFilePath,
   getBotStatusFilePath,
   getCronDataDir,
   getCronLogPath,
@@ -158,5 +159,49 @@ describe('getBotStatusFilePath', () => {
 
   it('falls back to /tmp/lettabot when nothing is set', () => {
     expect(getBotStatusFilePath()).toBe('/tmp/lettabot/bot-status.json');
+  });
+});
+
+describe('getBioRequestFilePath', () => {
+  beforeEach(() => {
+    clearPathEnv();
+  });
+
+  afterEach(() => {
+    clearPathEnv();
+    for (const [key, value] of Object.entries(ORIGINAL_ENV)) {
+      if (value !== undefined) {
+        process.env[key] = value;
+      }
+    }
+  });
+
+  it('prioritizes Railway volume path', () => {
+    process.env.RAILWAY_VOLUME_MOUNT_PATH = '/railway/volume';
+    process.env.DATA_DIR = '/custom/data';
+    process.env.WORKING_DIR = '/custom/work';
+
+    expect(getBioRequestFilePath('/yaml/work')).toBe('/railway/volume/bio-request.json');
+  });
+
+  it('uses DATA_DIR when Railway volume is not set', () => {
+    process.env.DATA_DIR = '/custom/data';
+    process.env.WORKING_DIR = '/custom/work';
+
+    expect(getBioRequestFilePath('/yaml/work')).toBe('/custom/data/bio-request.json');
+  });
+
+  it('uses WORKING_DIR env when DATA_DIR is not set', () => {
+    process.env.WORKING_DIR = '/custom/work';
+
+    expect(getBioRequestFilePath('/yaml/work')).toBe('/custom/work/bio-request.json');
+  });
+
+  it('uses caller-provided workingDir when no env overrides are set', () => {
+    expect(getBioRequestFilePath('/yaml/work')).toBe('/yaml/work/bio-request.json');
+  });
+
+  it('falls back to /tmp/lettabot when nothing is set', () => {
+    expect(getBioRequestFilePath()).toBe('/tmp/lettabot/bio-request.json');
   });
 });
