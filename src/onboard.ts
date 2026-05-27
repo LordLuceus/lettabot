@@ -1602,36 +1602,15 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   }
   
   p.intro('🤖 LettaBot Setup');
-  
+
   if (hasExistingConfig) {
     p.log.info(`Loading existing config from ${configPath}`);
   }
-  
-  // Pre-populate from existing config
-  const baseUrl = existingConfig.server.baseUrl || process.env.LETTA_BASE_URL || 'http://localhost:8283';
-  p.note(baseUrl, 'Server');
-  
-  // Test server connection
-  const spinner = p.spinner();
-  spinner.start('Testing connection...');
-  try {
-    const res = await fetch(`${baseUrl}/v1/health`, { signal: AbortSignal.timeout(5000) });
-    if (res.ok) {
-      spinner.stop('Connected to server');
-    } else {
-      spinner.stop('Server returned error');
-      p.log.warning(`Server responded with status ${res.status}`);
-    }
-  } catch (e) {
-    spinner.stop('Connection failed');
-    p.log.error(`Could not connect to ${baseUrl}`);
-    const continueAnyway = await p.confirm({ message: 'Continue anyway?', initialValue: false });
-    if (p.isCancel(continueAnyway) || !continueAnyway) {
-      p.cancel('Setup cancelled');
-      process.exit(1);
-    }
-  }
-  
+
+  // Note: the server URL is prompted in stepAuth(), which also handles the
+  // connection test and offers a retry that re-prompts the URL. No pre-check
+  // here.
+
   // Initialize config from existing env
   // Pre-populate from existing YAML config
   const config: OnboardConfig = {
