@@ -9,14 +9,17 @@ import { Letta } from '@letta-ai/letta-client';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('Letta-api');
-const LETTA_BASE_URL = process.env.LETTA_BASE_URL || 'http://localhost:8283';
 
 function getClient(): Letta {
+  // Read env vars at call time so that mid-process changes (e.g. the
+  // onboarding flow prompting for a new server URL on retry) take effect
+  // without needing a process restart.
+  const baseUrl = process.env.LETTA_BASE_URL || 'http://localhost:8283';
   const apiKey = process.env.LETTA_API_KEY;
   // Local servers may not require an API key
-  return new Letta({ 
-    apiKey: apiKey || '', 
-    baseURL: LETTA_BASE_URL,
+  return new Letta({
+    apiKey: apiKey || '',
+    baseURL: baseUrl,
     defaultHeaders: { "X-Letta-Source": "lettabot" },
   });
 }
