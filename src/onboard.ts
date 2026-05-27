@@ -6,7 +6,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import * as p from '@clack/prompts';
-import { saveConfig, syncProviders, upsertProvider } from './config/index.js';
+import { saveConfig, syncProviders } from './config/index.js';
 import type { AgentConfig, LettaBotConfig } from './config/types.js';
 import { parseCsvList, parseOptionalInt } from './utils/parse.js';
 import { CHANNELS, getChannelHint, isSignalCliInstalled, setupTelegram, setupSlack, setupDiscord, setupWhatsApp, setupSignal } from './channels/setup.js';
@@ -788,107 +788,6 @@ async function stepAgent(config: OnboardConfig, env: Record<string, string>): Pr
   }
 }
 
-type ByokProvider = {
-  id: string;
-  name: string;
-  displayName: string;
-  providerType: string;
-};
-
-// BYOK Provider definitions. The Letta server stores these credentials and
-// uses them when calling out to the underlying provider.
-const BYOK_PROVIDERS: ByokProvider[] = [
-  { id: 'anthropic', name: 'lc-anthropic', displayName: 'Anthropic (Claude)', providerType: 'anthropic' },
-  { id: 'openai', name: 'lc-openai', displayName: 'OpenAI', providerType: 'openai' },
-  { id: 'gemini', name: 'lc-gemini', displayName: 'Google Gemini', providerType: 'google_ai' },
-  { id: 'zai', name: 'lc-zai', displayName: 'zAI', providerType: 'zai' },
-  { id: 'minimax', name: 'lc-minimax', displayName: 'MiniMax', providerType: 'minimax' },
-  { id: 'openrouter', name: 'lc-openrouter', displayName: 'OpenRouter', providerType: 'openrouter' },
-];
-
-async function stepProviders(config: OnboardConfig, env: Record<string, string>): Promise<void> {
-  // BYOK provider sync requires an API key to authenticate against the server.
-  const apiKey = config.apiKey || env.LETTA_API_KEY || process.env.LETTA_API_KEY;
-  if (!apiKey) return;
-
-  const result = await p.multiselect({
-    message: 'Add connected providers (optional)',
-    options: BYOK_PROVIDERS.map(provider => ({
-      value: provider.id,
-      label: provider.displayName,
-      hint: `Connect your ${provider.displayName} API key`,
-    })),
-    required: false,
-  });
-  if (p.isCancel(result)) { p.cancel('Setup cancelled'); process.exit(0); }
-  const selectedProviders = (result as string[]) || [];
-
-  // If no providers selected, skip
-  if (selectedProviders.length === 0) {
-    return;
-  }
-
-  const providersById = new Map((config.providers ?? []).map(provider => [provider.id, provider]));
-  const baseUrl =
-    config.baseUrl ||
-    env.LETTA_BASE_URL ||
-    process.env.LETTA_BASE_URL ||
-    'http://localhost:8283';
-
-  // Collect API keys for each selected provider
-  for (const providerId of selectedProviders) {
-    const provider = BYOK_PROVIDERS.find(p => p.id === providerId);
-    if (!provider) continue;
-
-    const providerKey = await p.text({
-      message: `${provider.displayName} API Key`,
-      placeholder: 'sk-...',
-    });
-
-    if (p.isCancel(providerKey)) { p.cancel('Setup cancelled'); process.exit(0); }
-
-    if (providerKey) {
-      const spinner = p.spinner();
-      spinner.start(`Connecting ${provider.displayName}...`);
-
-      try {
-        await upsertProvider(baseUrl, apiKey, {
-          id: provider.id,
-          name: provider.name,
-          type: provider.providerType,
-          apiKey: providerKey,
-        });
-
-        spinner.stop(`Connected ${provider.displayName}`);
-        providersById.set(provider.id, { id: provider.id, name: provider.name, apiKey: providerKey });
-
-        // If OpenAI was just connected, offer to enable voice transcription
-        if (provider.id === 'openai') {
-          const enableTranscription = await p.confirm({
-            message: 'Enable voice message transcription with this OpenAI key? (uses Whisper)',
-            initialValue: false,
-          });
-          if (!p.isCancel(enableTranscription) && enableTranscription) {
-            config.transcription.enabled = true;
-            config.transcription.provider = 'openai';
-            config.transcription.apiKey = providerKey;
-          }
-        }
-      } catch (err) {
-        const detail = err instanceof Error ? `: ${err.message}` : '';
-        spinner.stop(`Failed to connect ${provider.displayName}${detail}`);
-      }
-    }
-  }
-
-  const mergedProviders = Array.from(providersById.values());
-  if (mergedProviders.length > 0) {
-    config.providers = mergedProviders;
-  } else {
-    delete config.providers;
-  }
-}
-
 async function stepModel(config: OnboardConfig, _env: Record<string, string>): Promise<void> {
   // Only for new agents
   if (config.agentChoice !== 'new') return;
@@ -1035,7 +934,7 @@ async function stepFeatures(config: OnboardConfig): Promise<void> {
 // ============================================================================
 
 async function stepTranscription(config: OnboardConfig, forcePrompt?: boolean): Promise<void> {
-  // Skip if already configured (e.g. from OpenAI shortcut in stepProviders)
+  // Skip if already configured (e.g. from existing YAML config)
   if (!forcePrompt && config.transcription.enabled && config.transcription.apiKey) return;
 
   const setupTranscription = await p.confirm({
@@ -1393,16 +1292,12 @@ function showSummary(config: OnboardConfig): void {
     lines.push(`Model:     ${config.model}`);
   }
 
-  // Providers
-  const providerNames: string[] = [];
+  // Providers (only present when carried over from existing YAML config;
+  // onboarding no longer prompts for them — set them up via your Letta
+  // server's web UI / admin API instead).
   if (config.providers?.length) {
-    for (const prov of config.providers) {
-      const def = BYOK_PROVIDERS.find(b => b.id === prov.id);
-      if (def) providerNames.push(def.displayName);
-    }
-  }
-  if (providerNames.length > 0) {
-    lines.push(`Providers: ${providerNames.join(', ')}`);
+    const names = config.providers.map(p => p.name || p.id);
+    lines.push(`Providers: ${names.join(', ')}`);
   }
   
   // Channels
@@ -1464,7 +1359,6 @@ async function reviewLoop(config: OnboardConfig, env: Record<string, string>): P
     else if (choice === 'agent') {
       await stepAgent(config, env);
       if (config.agentChoice === 'new') {
-        await stepProviders(config, env);
         await stepModel(config, env);
       }
     }
@@ -1682,7 +1576,6 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   await stepAuth(config, env);
   await stepAgent(config, env);
 
-  await stepProviders(config, env);
   await stepModel(config, env);
   await stepChannels(config, env);
   await stepFeatures(config);
