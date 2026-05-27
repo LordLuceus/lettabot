@@ -195,7 +195,7 @@ async function editServerAuth(draft: CoreConfigDraft): Promise<void> {
     placeholder: 'http://localhost:8283',
     initialValue: draft.server.baseUrl ?? 'http://localhost:8283',
     validate: (value) => {
-      const trimmed = value.trim();
+      const trimmed = (value ?? '').trim();
       if (!trimmed) return undefined; // empty -> use default
       if (!/^https?:\/\//.test(trimmed)) return 'URL must start with http:// or https://';
       return undefined;
@@ -218,7 +218,7 @@ async function editAgent(draft: CoreConfigDraft): Promise<void> {
     message: 'Agent name',
     initialValue: draft.agent.name,
     validate: (value) => {
-      if (!value.trim()) return 'Agent name is required';
+      if (!(value ?? '').trim()) return 'Agent name is required';
       return undefined;
     },
   });
@@ -340,7 +340,7 @@ async function editFeatures(draft: CoreConfigDraft): Promise<void> {
       placeholder: '60',
       initialValue: String(draft.features.heartbeat.intervalMin ?? 60),
       validate: (value) => {
-        const parsed = Number(value.trim());
+        const parsed = Number((value ?? '').trim());
         if (!Number.isFinite(parsed) || parsed <= 0) {
           return 'Enter a positive number';
         }
@@ -368,7 +368,7 @@ async function editFeatures(draft: CoreConfigDraft): Promise<void> {
         placeholder: '5',
         initialValue: String(draft.features.heartbeat.skipRecentUserMin ?? 5),
         validate: (value) => {
-          const parsed = Number(value.trim());
+          const parsed = Number((value ?? '').trim());
           if (!Number.isFinite(parsed) || parsed < 0) {
             return 'Enter a non-negative number';
           }
@@ -384,7 +384,7 @@ async function editFeatures(draft: CoreConfigDraft): Promise<void> {
         placeholder: '0.5',
         initialValue: String(draft.features.heartbeat.skipRecentFraction ?? 0.5),
         validate: (value) => {
-          const parsed = Number(value.trim());
+          const parsed = Number((value ?? '').trim());
           if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
             return 'Enter a number between 0 and 1';
           }

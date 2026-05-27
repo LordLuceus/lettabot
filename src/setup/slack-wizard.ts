@@ -14,19 +14,19 @@ interface SlackWizardResult {
 }
 
 // Shared validators (exported for use in onboard.ts manual flow)
-export function validateAppToken(val: string): string | undefined {
+export function validateAppToken(val: string | undefined): string | undefined {
   if (!val) return 'App Token is required';
   if (!val.startsWith('xapp-')) return 'App Token should start with "xapp-"';
   if (val.length < 20) return 'Token appears too short';
 }
 
-export function validateBotToken(val: string): string | undefined {
+export function validateBotToken(val: string | undefined): string | undefined {
   if (!val) return 'Bot Token is required';
   if (!val.startsWith('xoxb-')) return 'Bot Token should start with "xoxb-"';
   if (val.length < 20) return 'Token appears too short';
 }
 
-function validateSlackUserId(val: string): string | undefined {
+function validateSlackUserId(val: string | undefined): string | undefined {
   if (!val) return undefined; // Optional
   const ids = val.split(',').map(s => s.trim());
   for (const id of ids) {

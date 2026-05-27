@@ -136,7 +136,7 @@ async function promptGroupSettings(
       placeholder: '5',
       initialValue: existing?.groupDebounceSec !== undefined ? String(existing.groupDebounceSec) : '',
       validate: (value) => {
-        const trimmed = value.trim();
+        const trimmed = (value ?? '').trim();
         if (!trimmed) return undefined;
         const num = Number(trimmed);
         if (!Number.isFinite(num) || num < 0) return 'Enter a non-negative number or leave blank';
