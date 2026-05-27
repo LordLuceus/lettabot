@@ -262,6 +262,12 @@ async function main() {
   log.info(`Data directory: ${dataDir}`);
   log.info(`Working directory: ${globalConfig.workingDir}`);
   process.env.LETTABOT_WORKING_DIR = globalConfig.workingDir;
+  // Export the resolved working directory so that any in-process readers
+  // (e.g. getBotStatusFilePath()) and any child processes spawned later
+  // resolve the same directory the server is using, regardless of cwd.
+  if (!process.env.WORKING_DIR) {
+    process.env.WORKING_DIR = globalConfig.workingDir;
+  }
 
   // Propagate resolved config path so child processes (lettabot-message, lettabot-react)
   // can find the config regardless of their working directory.

@@ -244,6 +244,7 @@ Ask the bot owner to approve with:
       }
 
       // Watch status file for changes from lettabot-status CLI
+      log.info(`Status file: ${STATUS_FILE}`);
       this.statusWatcher = setInterval(async () => {
         try {
           const current = await loadDiscordStatus();
@@ -260,8 +261,11 @@ Ask the bot owner to approve with:
               }
             }
           }
-        } catch {
-          // Ignore poll errors
+        } catch (err) {
+          // Polling errors are non-fatal but worth surfacing at debug level
+          // (e.g. transient FS errors, malformed JSON). The poll re-runs
+          // every 5s, so a single failure doesn't compound.
+          log.debug('Status poll error:', err instanceof Error ? err.message : err);
         }
       }, 5000); // Poll every 5 seconds
     });
@@ -965,13 +969,19 @@ Ask the bot owner to approve with:
 // ── Status Persistence ───────────────────────────────────────────────────────
 
 import { promises as fs } from 'node:fs';
-import { join as pathJoin } from 'node:path';
+import { dirname } from 'node:path';
+import { getBotStatusFilePath } from '../utils/paths.js';
 
-const STATUS_FILE = pathJoin(process.cwd(), 'bot-status.json');
+// Resolved at module load. main.ts has already set WORKING_DIR before any
+// channel adapter starts, so the env path covers single- and multi-agent
+// setups. Falls back to /tmp/lettabot if neither env nor a working dir is
+// available — matches the CLI's resolution.
+const STATUS_FILE = getBotStatusFilePath();
 
 async function saveDiscordStatus(text: string | null): Promise<void> {
   try {
     if (text) {
+      await fs.mkdir(dirname(STATUS_FILE), { recursive: true });
       await fs.writeFile(STATUS_FILE, JSON.stringify({ message: text, timestamp: Date.now() }, null, 2));
     } else {
       await fs.unlink(STATUS_FILE).catch(() => {});
