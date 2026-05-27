@@ -90,9 +90,10 @@ export async function modelInteractive(): Promise<void> {
   // Show model selector
   let selectedModel: string | null = null;
   while (!selectedModel) {
-    const modelChoice = await p.select({
-      message: 'Select model',
+    const modelChoice = await p.autocomplete({
+      message: 'Select model (type to filter)',
       options: modelOptions,
+      placeholder: 'Type to filter by name or handle...',
       maxItems: 12,
     });
     if (p.isCancel(modelChoice)) {
