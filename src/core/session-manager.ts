@@ -31,7 +31,7 @@ import {
 } from "../skills/loader.js";
 
 import { createManageTodoTool } from "../tools/todo.js";
-import { SYSTEM_PROMPT } from "./system-prompt.js";
+import { SYSTEM_PROMPT, mergeSystemPrompt } from "./system-prompt.js";
 import { syncTodosFromTool } from "../todo/store.js";
 import { recoverPendingApprovalsWithSdk } from "./session-sdk-compat.js";
 import { createLogger } from "../logger.js";
@@ -124,16 +124,24 @@ export class SessionManager {
   // =========================================================================
 
   /**
-   * Sync the lettabot system prompt to the agent on the server.
-   * Runs once per bot lifetime (on first session creation) when syncSystemPrompt is enabled.
-   * Controlled by features.syncSystemPrompt in lettabot.yaml (default: true).
+   * Sync the lettabot channel instructions into the agent's system prompt.
+   * Runs once per bot lifetime (on first session creation) when syncSystemPrompt
+   * is enabled. Controlled by features.syncSystemPrompt in lettabot.yaml
+   * (default: FALSE -- opt in).
+   *
+   * NON-DESTRUCTIVE: the instructions are merged into a sentinel-delimited
+   * managed block, leaving the agent's own prompt (persona, memory-block
+   * projections) untouched. This previously replaced the whole `system` field,
+   * which silently destroyed the prompt of any agent with memfs/persona blocks
+   * -- the agent kept filesystem access but lost every block projection and
+   * answered out of character. See mergeSystemPrompt().
    */
   private async maybeSyncSystemPrompt(agentId: string): Promise<void> {
     if (this.systemPromptSynced) return;
     this.systemPromptSynced = true;
 
-    if (this.config.syncSystemPrompt === false) {
-      log.info("System prompt sync disabled by config");
+    if (this.config.syncSystemPrompt !== true) {
+      log.debug("System prompt sync disabled (default); leaving agent prompt as-is");
       return;
     }
 
@@ -143,8 +151,20 @@ export class SessionManager {
         apiKey: process.env.LETTA_API_KEY || "",
         baseURL: process.env.LETTA_BASE_URL || "http://localhost:8283",
       });
-      await client.agents.update(agentId, { system: SYSTEM_PROMPT });
-      log.info("Synced system prompt to agent");
+
+      const agent = await client.agents.retrieve(agentId);
+      const merged = mergeSystemPrompt(
+        (agent as { system?: string | null })?.system,
+        SYSTEM_PROMPT,
+      );
+
+      if (merged === null) {
+        log.debug("System prompt already up to date; skipping update");
+        return;
+      }
+
+      await client.agents.update(agentId, { system: merged });
+      log.info("Merged lettabot instructions into agent system prompt");
     } catch (err) {
       log.warn(
         "Failed to sync system prompt:",

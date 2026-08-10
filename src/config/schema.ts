@@ -134,7 +134,7 @@ export const FEATURES_FIELDS: SchemaField[] = [
   { key: 'features.heartbeat.promptFile', type: 'string', label: 'Heartbeat Prompt File', description: 'Path to prompt file (re-read each tick for live editing)' },
   { key: 'features.heartbeat.target', type: 'string', label: 'Heartbeat Target', description: 'e.g. telegram:12345' },
   { key: 'features.memfs', type: 'boolean', label: 'Memory Filesystem', description: 'Enable git-backed context repository' },
-  { key: 'features.syncSystemPrompt', type: 'boolean', label: 'Sync System Prompt', default: true },
+  { key: 'features.syncSystemPrompt', type: 'boolean', label: 'Sync System Prompt', default: false, description: "Merge lettabot's channel instructions into the agent's system prompt (non-destructive: fenced in markers, persona and memory blocks preserved)" },
   { key: 'features.maxToolCalls', type: 'number', label: 'Max Tool Calls', default: 100 },
   { key: 'features.inlineImages', type: 'boolean', label: 'Inline Images', default: true },
   { key: 'features.autoVoice', type: 'boolean', label: 'Auto Voice', description: 'Automatically generate TTS voice memo for every text response' },

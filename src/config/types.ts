@@ -81,7 +81,7 @@ export interface AgentConfig {
     };
     inlineImages?: boolean;   // Send images directly to the LLM (default: true). Set false to only send file paths.
     memfs?: boolean;          // Enable memory filesystem (git-backed context repository) for SDK sessions
-    syncSystemPrompt?: boolean; // Sync lettabot system prompt to agent on startup (default: true). Set false to preserve custom prompt edits.
+    syncSystemPrompt?: boolean; // Merge lettabot channel instructions into the agent's system prompt on startup (default: false). Non-destructive: wrapped in sentinel markers, the agent's own prompt/persona/memory-block projections are preserved.
     sleeptime?: SleeptimeConfig; // Configure SDK reflection reminders (/sleeptime equivalent)
     maxToolCalls?: number;
     sendFileDir?: string;    // Restrict <send-file> directive to this directory (default: data/outbound)

@@ -207,7 +207,7 @@ export interface BotConfig {
   sleeptime?: SleeptimeConfig; // Configure SDK reflection reminders (/sleeptime equivalent)
 
   // System prompt sync
-  syncSystemPrompt?: boolean; // Sync lettabot system prompt to agent on startup (default: true)
+  syncSystemPrompt?: boolean; // Merge lettabot channel instructions into the agent's system prompt on startup (default: false, non-destructive)
 
   // Security
   redaction?: import('./redact.js').RedactionConfig;

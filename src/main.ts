@@ -386,7 +386,7 @@ async function main() {
       inlineImages: agentConfig.features?.inlineImages ?? yamlConfig.features?.inlineImages,
       autoVoice: agentConfig.features?.autoVoice,
       memfs: resolvedMemfs,
-      syncSystemPrompt: agentConfig.features?.syncSystemPrompt ?? true,
+      syncSystemPrompt: agentConfig.features?.syncSystemPrompt ?? false,
       sleeptime: effectiveSleeptime,
       display: agentConfig.features?.display,
       channelDisplay: agentConfig.features?.channelDisplay,

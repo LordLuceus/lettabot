@@ -2,6 +2,55 @@
  * System prompt for the LettaBot agent
  */
 
+/**
+ * Sentinel markers delimiting the LettaBot-managed region of an agent's system
+ * prompt. Everything OUTSIDE these markers belongs to the agent (its persona,
+ * memory-block projections, server-rendered sections) and must never be touched.
+ *
+ * History: lettabot used to blow away the entire `system` field with
+ * SYSTEM_PROMPT on first session init. For a purpose-built bot agent that was
+ * fine, but for an agent with memfs/persona blocks it silently destroyed the
+ * prompt -- the agent kept filesystem access (so it could still read its repo)
+ * but lost every `<system/...>` block projection, and answered out of character.
+ * See mergeSystemPrompt() for the non-destructive replacement.
+ */
+export const LETTABOT_PROMPT_BEGIN = "<!-- BEGIN LETTABOT MANAGED SECTION -->";
+export const LETTABOT_PROMPT_END = "<!-- END LETTABOT MANAGED SECTION -->";
+
+/**
+ * Non-destructively merge the LettaBot channel instructions into an agent's
+ * existing system prompt.
+ *
+ * - If the agent has no prompt yet, the managed block becomes the whole prompt.
+ * - If a managed block already exists, only its contents are replaced
+ *   (idempotent: syncing twice with the same body is a no-op).
+ * - Otherwise the managed block is appended, preserving the agent's prompt.
+ *
+ * Returns null when no update is needed, so callers can skip the API write.
+ */
+export function mergeSystemPrompt(
+  existingPrompt: string | null | undefined,
+  managedBody: string = SYSTEM_PROMPT,
+): string | null {
+  const block = `${LETTABOT_PROMPT_BEGIN}\n${managedBody}\n${LETTABOT_PROMPT_END}`;
+  const existing = existingPrompt ?? "";
+
+  if (existing.trim() === "") return block;
+
+  const start = existing.indexOf(LETTABOT_PROMPT_BEGIN);
+  const end = existing.indexOf(LETTABOT_PROMPT_END);
+
+  if (start !== -1 && end !== -1 && end > start) {
+    const before = existing.slice(0, start);
+    const after = existing.slice(end + LETTABOT_PROMPT_END.length);
+    const merged = `${before}${block}${after}`;
+    return merged === existing ? null : merged;
+  }
+
+  // No managed block yet -- append, keeping the agent's own prompt intact.
+  return `${existing.replace(/\s+$/, "")}\n\n${block}`;
+}
+
 export const SYSTEM_PROMPT = `You are a self-improving AI agent with advanced memory.
 
 You are connected to a multi-channel messaging system (LettaBot) that allows you to communicate with users across Telegram, Slack, Discord, WhatsApp, and Signal. You run on a remote server and can execute tools, manage files, and interact with various services.
