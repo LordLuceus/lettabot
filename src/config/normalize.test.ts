@@ -15,6 +15,7 @@ vi.mock('../logger.js', () => ({
 
 import {
   normalizeAgents,
+  resolveConfiguredWorkingDir,
   type LettaBotConfig,
   type AgentConfig,
 } from './types.js';
@@ -34,6 +35,10 @@ describe('normalizeAgents', () => {
     'HEARTBEAT_SKIP_RECENT_POLICY', 'HEARTBEAT_SKIP_RECENT_FRACTION', 'HEARTBEAT_INTERRUPT_ON_USER_MESSAGE',
     'SLEEPTIME_TRIGGER', 'SLEEPTIME_BEHAVIOR', 'SLEEPTIME_STEP_COUNT',
     'CRON_ENABLED',
+    // normalizeAgents() reads these as the agent-name fallback. Without
+    // clearing them the name-default tests fail on any machine that happens to
+    // export AGENT_NAME (e.g. a running Letta Code session).
+    'LETTA_AGENT_NAME', 'AGENT_NAME',
   ];
   const savedEnv: Record<string, string | undefined> = {};
 
@@ -879,5 +884,77 @@ describe('normalizeAgents', () => {
     expect(agents[0].channels.whatsapp?.enabled).toBe(true);
     expect(agents[0].features?.cron).toBe(true);
     expect(agents[0].features?.heartbeat?.intervalMin).toBe(30);
+  });
+});
+
+/**
+ * Regression tests for the multi-agent workingDir bug.
+ *
+ * main.ts built globalConfig with getWorkingDir(yamlConfig.agent?.workingDir) --
+ * the LEGACY single-agent key. A multi-agent config (`agents:` array) set
+ * `agents[0].workingDir`, which was never read, so the bot silently fell back to
+ * /tmp/lettabot. The SDK subprocess then ran in the wrong workspace.
+ */
+describe('resolveConfiguredWorkingDir', () => {
+  it('reads workingDir from a multi-agent config (the bug)', () => {
+    const config = {
+      agents: [
+        {
+          name: 'hortator-community',
+          workingDir: '/home/luceus/nedras',
+        } as AgentConfig,
+      ],
+    } as unknown as LettaBotConfig;
+
+    expect(resolveConfiguredWorkingDir(config)).toBe('/home/luceus/nedras');
+  });
+
+  it('still reads the legacy single-agent workingDir', () => {
+    const config: LettaBotConfig = {
+      agent: { name: 'LettaBot', workingDir: '/srv/legacy' },
+    } as LettaBotConfig;
+
+    expect(resolveConfiguredWorkingDir(config)).toBe('/srv/legacy');
+  });
+
+  it('prefers the legacy key when both are present', () => {
+    const config: LettaBotConfig = {
+      agent: { name: 'LettaBot', workingDir: '/srv/legacy' },
+      agents: [{ name: 'a', workingDir: '/srv/multi' } as AgentConfig],
+    } as LettaBotConfig;
+
+    expect(resolveConfiguredWorkingDir(config)).toBe('/srv/legacy');
+  });
+
+  it('falls back to the first agent that declares a workingDir', () => {
+    const config = {
+      agents: [
+        { name: 'a' } as AgentConfig,
+        { name: 'b', workingDir: '/srv/second' } as AgentConfig,
+      ],
+    } as unknown as LettaBotConfig;
+
+    expect(resolveConfiguredWorkingDir(config)).toBe('/srv/second');
+  });
+
+  it('returns undefined when nothing is configured (caller keeps its default)', () => {
+    expect(resolveConfiguredWorkingDir({} as LettaBotConfig)).toBeUndefined();
+    expect(
+      resolveConfiguredWorkingDir({ agents: [] } as unknown as LettaBotConfig),
+    ).toBeUndefined();
+    expect(
+      resolveConfiguredWorkingDir({
+        agents: [{ name: 'a' } as AgentConfig],
+      } as unknown as LettaBotConfig),
+    ).toBeUndefined();
+  });
+
+  it('ignores blank/whitespace-only values', () => {
+    expect(
+      resolveConfiguredWorkingDir({
+        agent: { name: 'x', workingDir: '   ' },
+        agents: [{ name: 'a', workingDir: '/srv/real' } as AgentConfig],
+      } as LettaBotConfig),
+    ).toBe('/srv/real');
   });
 });

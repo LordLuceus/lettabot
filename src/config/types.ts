@@ -556,6 +556,36 @@ function normalizeLegacyGroupFields(
 }
 
 /**
+ * Resolve the configured working directory from EITHER config shape.
+ *
+ * The global working directory is computed at module load, before
+ * normalizeAgents() runs, so it cannot rely on the normalized agents array.
+ * It previously read only the legacy `agent.workingDir` key, which meant a
+ * multi-agent config (`agents:` array) silently fell through to the
+ * /tmp/lettabot default no matter what `agents[0].workingDir` said.
+ *
+ * Precedence: legacy `agent.workingDir` first (an explicit legacy config
+ * should keep winning), then the first agent entry that declares one.
+ *
+ * Note this is deliberately shape-aware rather than "first agent wins": in a
+ * multi-agent config each agent may set its own workingDir (honoured per-agent
+ * in main.ts), and this only picks the value used for global/shared paths.
+ */
+export function resolveConfiguredWorkingDir(
+  config: LettaBotConfig,
+): string | undefined {
+  const legacy = config.agent?.workingDir?.trim();
+  if (legacy) return legacy;
+
+  for (const agent of config.agents ?? []) {
+    const candidate = agent?.workingDir?.trim();
+    if (candidate) return candidate;
+  }
+
+  return undefined;
+}
+
+/**
  * Normalize config to multi-agent format.
  *
  * If the config uses legacy single-agent format (agent: + channels:),

@@ -60,7 +60,7 @@ const STORE_PATH = resolve(getDataDir(), 'lettabot-agent.json');
 const currentBaseUrl = process.env.LETTA_BASE_URL || 'http://localhost:8283';
 loadStoredAgentId(STORE_PATH, currentBaseUrl);
 
-import { normalizeAgents } from './config/types.js';
+import { normalizeAgents, resolveConfiguredWorkingDir } from './config/types.js';
 import { LettaGateway } from './core/gateway.js';
 import { LettaBot } from './core/bot.js';
 import type { Store } from './core/store.js';
@@ -231,7 +231,10 @@ function parseHeartbeatSkipRecentPolicy(raw?: string): 'fixed' | 'fraction' | 'o
 
 // Global config (shared across all agents)
 const globalConfig = {
-  workingDir: getWorkingDir(yamlConfig.agent?.workingDir),
+  // Resolve from either config shape: reading only the legacy `agent.workingDir`
+  // meant multi-agent configs (`agents:` array) silently fell back to
+  // /tmp/lettabot, so the SDK subprocess ran in the wrong workspace.
+  workingDir: getWorkingDir(resolveConfiguredWorkingDir(yamlConfig)),
   allowedTools: ensureRequiredTools(
     yamlConfig.features?.allowedTools ??
     parseCsvList(process.env.ALLOWED_TOOLS || 'Bash,Read,Edit,Write,Glob,Grep,Task,web_search,conversation_search'),
