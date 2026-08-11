@@ -73,7 +73,7 @@
     "@clack/prompts": "^1.4.0",
     "@hapi/boom": "^10.0.1",
     "@letta-ai/letta-client": "^1.10.1",
-    "@letta-ai/letta-code-sdk": "^0.1.14",
+    "@letta-ai/letta-code-sdk": "^0.2.1",
     "@types/express": "^5.0.6",
     "@types/node": "^25.0.10",
     "@types/node-schedule": "^2.1.8",
@@ -109,6 +109,7 @@
     "vitest": "^4.0.18"
   },
   "overrides": {
-    "keyv": "$keyv"
+    "keyv": "$keyv",
+    "@letta-ai/letta-code": "^0.30.6"
   }
 }

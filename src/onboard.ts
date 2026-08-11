@@ -1588,7 +1588,9 @@ export async function onboard(options?: { nonInteractive?: boolean }): Promise<v
   
   // Create agent eagerly if user chose "new" and we don't have an ID yet
   if (config.agentChoice === 'new' && !config.agentId) {
-    const { createAgent } = await import('@letta-ai/letta-code-sdk');
+    // Via the shared stdio-pinned client: the SDK's bare createAgent() helper
+    // defaults to an app-server WebSocket transport lettabot cannot use.
+    const { createSdkAgent: createAgent } = await import('./core/sdk-client.js');
     const { updateAgentName, ensureNoToolApprovals } = await import('./tools/letta-api.js');
     const { installSkillsToAgent, isVoiceMemoConfigured } = await import('./skills/loader.js');
     const { loadMemoryBlocks } = await import('./core/memory.js');

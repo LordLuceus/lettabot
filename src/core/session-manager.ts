@@ -7,12 +7,14 @@
  */
 
 import {
-  createSession,
-  resumeSession,
   type Session,
   type SendMessage,
   type CanUseToolCallback,
 } from "@letta-ai/letta-code-sdk";
+// Always go through the shared stdio-pinned client: the SDK's bare
+// createSession/resumeSession helpers default to an app-server WebSocket
+// transport that lettabot cannot use. See sdk-client.ts.
+import { createSdkSession, resumeSdkSession } from "./sdk-client.js";
 import type { BotConfig, StreamMsg } from "./types.js";
 import {
   isApprovalConflictError,
@@ -389,7 +391,7 @@ export class SessionManager {
       installSkillsToAgent(this.store.agentId, this.config.skills);
       sessionAgentId = this.store.agentId;
       prependSkillDirsToPath(sessionAgentId); // must be before resumeSession spawns subprocess
-      session = resumeSession(this.store.agentId, opts);
+      session = resumeSdkSession(this.store.agentId, opts);
     } else if (convId) {
       process.env.LETTA_AGENT_ID = this.store.agentId || undefined;
       if (this.store.agentId) {
@@ -397,7 +399,7 @@ export class SessionManager {
         sessionAgentId = this.store.agentId;
         prependSkillDirsToPath(sessionAgentId); // must be before resumeSession spawns subprocess
       }
-      session = resumeSession(convId, opts);
+      session = resumeSdkSession(convId, opts);
     } else if (this.store.agentId) {
       // Agent exists but no conversation stored for this key.
       // 'shared' is the single shared conversation — resume it like the default.
@@ -408,8 +410,8 @@ export class SessionManager {
       prependSkillDirsToPath(sessionAgentId); // must be before resumeSession/createSession spawns subprocess
       session =
         key === "shared"
-          ? resumeSession(this.store.agentId, opts)
-          : createSession(this.store.agentId, opts);
+          ? resumeSdkSession(this.store.agentId, opts)
+          : createSdkSession(this.store.agentId, opts);
     } else {
       throw new Error(
         "No agent ID configured. Set agent.id in lettabot.yaml, " +

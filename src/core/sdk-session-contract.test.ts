@@ -4,10 +4,17 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 vi.mock('@letta-ai/letta-code-sdk', () => ({
-  createAgent: vi.fn(),
-  createSession: vi.fn(),
-  resumeSession: vi.fn(),
   imageFromBase64: vi.fn((_data: string, _type: string) => ({ type: 'image', source: { type: 'base64', media_type: _type, data: _data } })),
+}));
+
+// Session/agent construction goes through the shared stdio-pinned client
+// (src/core/sdk-client.ts), not the SDK's bare helpers -- so that is the seam
+// the contract tests must mock.
+vi.mock('./sdk-client.js', () => ({
+  getSdkClient: vi.fn(),
+  createSdkAgent: vi.fn(),
+  createSdkSession: vi.fn(),
+  resumeSdkSession: vi.fn(),
 }));
 
 vi.mock('../tools/letta-api.js', () => ({
@@ -40,7 +47,11 @@ vi.mock('./system-prompt.js', () => ({
   SYSTEM_PROMPT: 'test system prompt',
 }));
 
-import { createAgent, createSession, resumeSession } from '@letta-ai/letta-code-sdk';
+import {
+  createSdkAgent as createAgent,
+  createSdkSession as createSession,
+  resumeSdkSession as resumeSession,
+} from './sdk-client.js';
 import { getLatestRunError, recoverOrphanedConversationApproval, recoverPendingApprovalsForAgent } from '../tools/letta-api.js';
 import { LettaBot } from './bot.js';
 import { SessionManager } from './session-manager.js';
